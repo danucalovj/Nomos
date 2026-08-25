@@ -1,0 +1,57 @@
+name: Bug Report
+description: Something in Nomos does not work the way it should
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The more precisely we can reproduce it, the faster it gets fixed.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What Happened
+      description: What did you see, and what did you expect instead?
+      placeholder: The board showed... but I expected...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps, starting from a fresh ./start.sh where possible. Include curl commands if the bug is API-side.
+      placeholder: |
+        1. ./start.sh
+        2. Create a project named...
+        3. POST /api/projects/1/tickets with...
+        4. Observe...
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      description: Where does the bug show up?
+      options:
+        - Web UI (admin console)
+        - REST API
+        - SSE / real-time delivery
+        - Audit trail / file monitor
+        - Server startup / migrations
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      description: Paste from data/logs/nomos.log or the browser console. This is formatted as code automatically.
+      render: shell
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, and browser if UI-related
+      placeholder: macOS 15.4, Python 3.11.9, Chrome 139
+    validations:
+      required: true

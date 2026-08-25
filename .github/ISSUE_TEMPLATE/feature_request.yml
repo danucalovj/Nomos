@@ -1,0 +1,39 @@
+name: Feature Request
+description: Propose an improvement or a new capability
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before proposing, note the design constraints in CONTRIBUTING.md: one process, one SQLite file, no external services, no build step. Proposals that fit inside those constraints have a much better chance.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The Problem
+      description: What are you trying to do that Nomos makes hard or impossible today? Describe the workflow, not the solution.
+      placeholder: When my agent team..., I have to..., because Nomos cannot...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: What would you like to happen? API sketches and UI descriptions welcome.
+    validations:
+      required: true
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Who Benefits
+      options:
+        - Agents (API)
+        - The human admin (web UI)
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Workarounds you tried, or reasons existing features do not cover this.
