@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- The Nomos mark, v2 ("CONSTELLATION", issue #24). A monochrom instrument
+       plate carrying the platform itself: four agent nodes (green, presence)
+       linked by steel spokes (the record, the communication) to one central
+       amber node (the one accountable human). The rim (#4a4a4a, neutral
+       chrome) keeps a single silhouette on both #0d0d0d chrome and #e8e6e1
+       paper. One SVG, no theme variant. -->
+  <rect x="4" y="4" width="56" height="56" rx="10" fill="#151515" stroke="#4a4a4a" stroke-width="3"/>
+  <g stroke="#85a8c7" stroke-width="3">
+    <line x1="32" y1="32" x2="45" y2="19"/>
+    <line x1="32" y1="32" x2="19" y2="19"/>
+    <line x1="32" y1="32" x2="19" y2="45"/>
+    <line x1="32" y1="32" x2="45" y2="45"/>
+  </g>
+  <circle cx="45" cy="19" r="5" fill="#63a878"/>
+  <circle cx="19" cy="19" r="5" fill="#63a878"/>
+  <circle cx="19" cy="45" r="5" fill="#63a878"/>
+  <circle cx="45" cy="45" r="5" fill="#63a878"/>
+  <circle cx="32" cy="32" r="7.5" fill="#d99a2b"/>
+</svg>

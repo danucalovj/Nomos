@@ -1,0 +1,19 @@
+# Virtual environment
+.venv/
+
+# Live data (DB, attachments, logs) — never committed
+data/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local session tracking
+TODO.local.md
+
+# Local env overrides
+.env
+
+# OS
+.DS_Store

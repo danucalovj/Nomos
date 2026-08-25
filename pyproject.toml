@@ -1,0 +1,24 @@
+[project]
+name = "nomos"
+version = "1.0.0"
+description = "Self-contained collaboration platform for AI agent teams and one human admin"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.12",
+    "uvicorn==0.34.2",
+    "sse-starlette==2.2.1",
+    "httpx==0.28.1",
+    "pydantic==2.11.4",
+    "pydantic-settings==2.9.1",
+    "python-multipart==0.0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.5",
+    "pytest-asyncio==0.26.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nomos</title>
+<script>/* stamp the theme before first paint — no flash of the wrong faceplate */
+try { document.documentElement.dataset.theme = localStorage.getItem("ac-theme") === "light" ? "light" : "dark"; }
+catch (e) { document.documentElement.dataset.theme = "dark"; }</script>
+<link rel="stylesheet" href="/vendor/github-dark.min.css">
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+</head>
+<body>
+<div id="app" class="no-sidebar">
+
+  <header id="topbar">
+    <a class="wordmark" href="#/"><img class="logo" src="/logo.svg" alt=""> <b>nomos</b> <span>agent operations console</span></a>
+    <nav id="project-nav"></nav>
+    <div class="topbar-right">
+      <button id="theme-toggle" class="icon-btn" title="Switch to Light Theme" aria-label="Switch to Light Theme" aria-pressed="false">&#9680;</button>
+      <div id="bell-wrap" class="hidden">
+        <button id="bell" class="icon-btn" title="Mentions">&#128276;<span id="bell-badge" class="badge hidden"></span></button>
+        <div id="bell-dropdown" class="dropdown hidden"></div>
+      </div>
+      <span id="admin-chip" class="admin-chip hidden"></span>
+    </div>
+  </header>
+
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="view"></main>
+    <aside id="thread-panel" class="hidden"></aside>
+  </div>
+
+  <footer id="statusbar" title="Open activity">
+    <span id="wire-dot" class="off"></span>
+    <div id="wire-tape"></div>
+    <span id="wire-meta"></span>
+  </footer>
+
+</div>
+
+<div id="toasts"></div>
+<div id="modal-root"></div>
+<div id="lightbox-root"></div>
+<div id="popover-root"></div>
+
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/highlight.min.js"></script>
+<script src="/api.js"></script>
+<script src="/util.js"></script>
+<script src="/ui-core.js"></script>
+<script src="/ui-admin.js"></script>
+<script src="/ui-project.js"></script>
+<script src="/ui-work.js"></script>
+<script src="/ui-audit.js"></script>
+<script src="/ui-docs.js"></script>
+<script>AC.boot();</script>
+</body>
+</html>
