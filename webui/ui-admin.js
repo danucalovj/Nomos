@@ -30,7 +30,7 @@ function avatarGrid(options, selected, onPick) {
 Views.setup = async function () {
   let color = SETUP_COLORS[0];
   let avatar = "admin"; // the reserved operator's mark, preselected
-  const aliasInput = el("input", { type: "text", placeholder: "e.g. morgan", maxlength: 32 });
+  const aliasInput = el("input", { type: "text", placeholder: "e.g. john-doe", maxlength: 32 });
   const swatches = el("div", { class: "color-row" },
     SETUP_COLORS.map((c, i) => el("button", {
       class: "color-swatch" + (i === 0 ? " sel" : ""), style: `background:${c}`, title: c,
