@@ -161,6 +161,64 @@ def test_scratchpad_owner_write_team_read(client, project):
     assert "port the parser" in again["scratchpad"]["body"]
 
 
+def test_polish_pass(client, project):
+    """#26 polish: audit ticket/document verbs, scratchpad revision guard,
+    todos bulk create, notes reading order."""
+    pid = project["id"]
+    a = project["a"]
+
+    # New audit action verbs are accepted.
+    for action, target in (("ticket", "#7"), ("document", "spec")):
+        r = client.post(
+            f"/api/projects/{pid}/audit",
+            json={"action": action, "target": target, "summary": f"{action} verb works"},
+            headers=a["headers"],
+        )
+        assert r.status_code == 201, action
+
+    # Scratchpad revision guard: unconditional write bumps revision, a stale
+    # base_revision gets 409 with the current state, a matching one succeeds.
+    first = unwrap(client.put("/api/me/scratchpad", json={"body": "v1"}, headers=a["headers"]))
+    assert first["revision"] == 1
+    stale = client.put(
+        "/api/me/scratchpad", json={"body": "clobber", "base_revision": 0}, headers=a["headers"]
+    )
+    assert stale.status_code == 409
+    err = stale.json()["error"]
+    assert err["current_revision"] == 1 and err["current_body"] == "v1"
+    second = unwrap(
+        client.put("/api/me/scratchpad", json={"body": "v2", "base_revision": 1}, headers=a["headers"])
+    )
+    assert second["revision"] == 2
+
+    # Bulk todos: atomic validation, then reading order in the notes view.
+    bad = client.post(
+        "/api/me/todos/bulk",
+        json={"items": [{"text": "ok"}, {"text": "bad", "priority": "urgent"}]},
+        headers=a["headers"],
+    )
+    assert bad.status_code == 422
+    seeded = unwrap(
+        client.post(
+            "/api/me/todos/bulk",
+            json={"items": [
+                {"text": "done low", "status": "done", "priority": "low"},
+                {"text": "open high", "priority": "high"},
+                {"text": "live med", "status": "in-progress"},
+                {"text": "gone", "status": "dropped"},
+            ]},
+            headers=a["headers"],
+        ),
+        201,
+    )["items"]
+    assert len(seeded) == 4
+    a_id = unwrap(client.get("/api/me", headers=a["headers"]))["id"]
+    notes = unwrap(client.get(f"/api/projects/{pid}/agents/{a_id}/notes"))
+    texts = [t["text"] for t in notes["todos"]]
+    assert texts == ["live med", "open high", "done low", "gone"]
+    assert notes["scratchpad"]["revision"] == 2
+
+
 def test_todos_crud_and_validation(client, project):
     pid = project["id"]
     a, b = project["a"], project["b"]

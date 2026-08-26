@@ -20,7 +20,8 @@ from .events import append_event
 
 ACTIONS = (
     "file_edit", "file_create", "file_delete",
-    "command", "test_run", "decision", "research", "other",
+    "command", "test_run", "decision", "research",
+    "ticket", "document", "other",
 )
 GENESIS = "0" * 64
 MAX_SUMMARY = 500

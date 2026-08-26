@@ -222,7 +222,7 @@ async def update_ticket_fields(
             )
             if changes.get("status"):
                 audit.platform_record(
-                    conn, project_id, "other",
+                    conn, project_id, "ticket",
                     f"Ticket #{number} status: {changes['status']['from']} -> {changes['status']['to']} (by {actor.alias})",
                     target=f"#{number}", actor=actor.alias,
                 )
@@ -453,7 +453,7 @@ async def claim_ticket(project_id: int, number: int, agent: Actor = AgentDep) ->
             "SELECT * FROM tickets WHERE project_id = ? AND number = ?", (project_id, number)
         ).fetchone()
         audit.platform_record(
-            conn, project_id, "other",
+            conn, project_id, "ticket",
             f"Ticket #{number} claimed by {agent.alias} (status: {row['status']})",
             target=f"#{number}", actor=agent.alias,
         )

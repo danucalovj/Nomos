@@ -108,7 +108,7 @@ async def create_document(project_id: int, body: DocumentCreate, request: Reques
         update_documents_fts(conn, doc_id, title, body.body)
         record_ticket_links(conn, project_id, "document", doc_id, body.body)
         audit.platform_record(
-            conn, project_id, "other",
+            conn, project_id, "document",
             f"Document '{slug}' created (revision 1) by {actor.alias}",
             target=slug, actor=actor.alias,
         )
@@ -240,7 +240,7 @@ async def write_document(
         update_documents_fts(conn, doc["id"], title, body.body)
         record_ticket_links(conn, project_id, "document", doc["id"], body.body)
         audit.platform_record(
-            conn, project_id, "other",
+            conn, project_id, "document",
             f"Document '{slug}' revised to r{new_revision} by {actor.alias}",
             target=slug, actor=actor.alias,
         )
