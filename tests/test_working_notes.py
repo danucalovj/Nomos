@@ -100,6 +100,32 @@ def test_working_dir_create_rolls_back_on_bad_path(client):
     assert ok2.status_code == 201
 
 
+def test_browse_dirs_admin_only(client, project):
+    """Issue #27: the picker endpoint lists directories for the admin and is
+    closed to agent keys."""
+    base = Path(_tmpdir())
+    (base / "alpha").mkdir()
+    (base / "beta").mkdir()
+    (base / ".hidden").mkdir()
+    (base / "file.txt").write_text("x")
+
+    listing = unwrap(client.get(f"/api/fs/dirs?path={base}"))
+    names = [d["name"] for d in listing["dirs"]]
+    assert names == ["alpha", "beta"]  # sorted, no hidden, no files
+    assert listing["parent"] and listing["selectable"] is True
+
+    system = unwrap(client.get("/api/fs/dirs?path=/"))
+    blocked = {d["name"]: d["selectable"] for d in system["dirs"]}
+    if "etc" in blocked:
+        assert blocked["etc"] is False
+
+    r = client.get(f"/api/fs/dirs?path={base}", headers=project["a"]["headers"])
+    assert r.status_code in (401, 403)
+
+    r = client.get(f"/api/fs/dirs?path={base / 'file.txt'}")
+    assert r.status_code == 404
+
+
 def test_scratchpad_owner_write_team_read(client, project):
     pid = project["id"]
     a, b = project["a"], project["b"]

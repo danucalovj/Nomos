@@ -2,6 +2,7 @@
 archive, working directory, and transactional cascade delete."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -194,6 +195,52 @@ async def update_project(project_id: int, body: ProjectUpdate, _admin: Actor = A
                     target=project["working_dir"], actor="admin",
                 )
     return ok(serialize_project(get_project(project_id)))
+
+
+@router.get("/fs/dirs")
+async def browse_dirs(path: str = "", _admin: Actor = AdminDep) -> dict:
+    """Admin-only directory listing backing the working-directory Browse
+    control in the web UI. Never exposed to agent keys: no agent may walk
+    the host filesystem. Directories under the system-path denylist are
+    listed but marked unselectable, matching what set_working_dir accepts."""
+    base = (Path(path).expanduser() if path.strip() else Path.home()).resolve()
+    if not base.is_dir():
+        raise ApiError(404, "not_found", f"'{base}' is not a directory.")
+
+    def _scan() -> tuple[list[dict], bool]:
+        # Capped and stat-lazy: sort names first (cheap), stat until the cap.
+        dirs: list[dict] = []
+        names = sorted((c.name for c in base.iterdir()), key=str.lower)
+        for name in names:
+            if name.startswith("."):
+                continue
+            child = base / name
+            try:
+                if not child.is_dir():
+                    continue
+            except OSError:
+                continue
+            if len(dirs) >= 500:
+                return dirs, True
+            dirs.append({
+                "name": name,
+                "path": str(child),
+                "selectable": not _forbidden_watch_path(child.resolve()),
+            })
+        return dirs, False
+
+    try:
+        dirs, truncated = await asyncio.to_thread(_scan)
+    except PermissionError:
+        raise ApiError(403, "forbidden", f"Cannot read '{base}': permission denied.")
+    return ok({
+        "path": str(base),
+        "parent": str(base.parent) if base != base.parent else None,
+        "home": str(Path.home()),
+        "selectable": not _forbidden_watch_path(base),
+        "truncated": truncated,
+        "dirs": dirs,
+    })
 
 
 @router.put("/projects/{project_id}/working_dir")

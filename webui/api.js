@@ -51,6 +51,7 @@ const API = {
   createProject: (name, description, working_dir) =>
     _req("POST", "/api/projects", { name, description, working_dir: working_dir || "" }),
   agentNotes: (pid, agentId) => _req("GET", `/api/projects/${pid}/agents/${agentId}/notes`),
+  browseDirs: (path) => _req("GET", "/api/fs/dirs" + (path ? `?path=${encodeURIComponent(path)}` : "")),
   updateProject: (pid, patch) => _req("PATCH", `/api/projects/${pid}`, patch),
   archiveProject: (pid) => _req("POST", `/api/projects/${pid}/archive`),
   unarchiveProject: (pid) => _req("POST", `/api/projects/${pid}/unarchive`),

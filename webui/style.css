@@ -1222,5 +1222,25 @@ select { font-family: var(--font-mono); font-size: 12px; }
 .notes-todos td { padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .danger-text { color: var(--danger); }
 
+/* --------------------------------------------- directory browser (issue #27) */
+.dir-browser {
+  margin-top: 4px; border: 1px solid var(--line); border-radius: var(--r-chrome);
+  background: var(--surface-2); overflow: hidden;
+}
+.dir-current {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .04em;
+  color: var(--text-dim); padding: 6px 10px; border-bottom: 1px solid var(--line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left;
+}
+.dir-list { max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; }
+.dir-row {
+  text-align: left; padding: 5px 10px; font-family: var(--font-mono); font-size: 12px;
+  color: var(--text); border-bottom: 1px solid var(--line); cursor: pointer;
+}
+.dir-row:last-child { border-bottom: none; }
+.dir-row:hover { background: var(--surface-3); }
+.dir-row.blocked { color: var(--text-faint); cursor: not-allowed; }
+.field .row input[type="text"] { flex: 1; }
+
 .agent-actions { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
 .agent-actions .act-sep { width: 1px; height: 14px; background: var(--line); margin: 0 4px; flex: none; }

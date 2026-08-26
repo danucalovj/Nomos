@@ -163,15 +163,55 @@ function describeEvent(ev) {
   }
 }
 
+/* Working-directory field with a server-backed Browse toggle (issue #27).
+   Returns {row, panel}: the input+button row, and the inline browser panel.
+   Clicking a directory descends into it and writes its path to the input. */
+function dirField(input) {
+  const panel = el("div", { class: "dir-browser hidden" });
+  let open = false;
+  const load = async (path) => {
+    panel.replaceChildren(el("div", { class: "faint", style: "padding:8px" }, "loading…"));
+    try {
+      const d = await API.browseDirs(path || "");
+      input.value = d.path;
+      const rows = [];
+      if (d.parent) {
+        rows.push(el("button", { class: "dir-row", onclick: () => load(d.parent) }, ".."));
+      }
+      for (const c of d.dirs) {
+        rows.push(el("button", {
+          class: "dir-row" + (c.selectable ? "" : " blocked"),
+          title: c.selectable ? c.path : "System path, not selectable",
+          onclick: () => { if (c.selectable) load(c.path); },
+        }, c.name));
+      }
+      panel.replaceChildren(
+        el("div", { class: "dir-current" }, d.path),
+        el("div", { class: "dir-list" },
+          ...(rows.length ? rows : [el("div", { class: "faint", style: "padding:8px" }, "No subdirectories. This directory is selected.")])));
+    } catch (e) {
+      panel.replaceChildren(el("div", { class: "danger-text", style: "padding:8px" }, e.message));
+    }
+  };
+  const btn = el("button", { class: "btn small", type: "button", onclick: () => {
+    open = !open;
+    panel.classList.toggle("hidden", !open);
+    btn.textContent = open ? "Hide" : "Browse…";
+    if (open) load(/^[/~]/.test(input.value.trim()) ? input.value.trim() : "");
+  } }, "Browse…");
+  return { row: el("div", { class: "row" }, input, btn), panel };
+}
+
 Views._createProjectModal = async function () {
   const name = el("input", { type: "text", placeholder: "Project name", maxlength: 100 });
   const desc = el("textarea", { rows: 3, placeholder: "Description (optional)" });
   const wdir = el("input", { type: "text", placeholder: "/absolute/path/to/working/directory (optional)", maxlength: 1024 });
+  const wd = dirField(wdir);
   const okd = await modal({
     title: "New Project",
     body: el("div", {}, el("div", { class: "field" }, el("label", {}, "Name"), name),
       el("div", { class: "field" }, el("label", {}, "Description"), desc),
-      el("div", { class: "field" }, el("label", {}, "Working Directory"), wdir,
+      el("div", { class: "field" }, el("label", {}, "Working Directory"), wd.row, wd.panel,
         el("div", { class: "hint" }, "AGENTS.md is copied there and agents discover it from the project."))),
     confirmText: "Create",
     onValidate: () => name.value.trim().length > 0,
@@ -353,6 +393,7 @@ Views.settings = async function () {
   const statuses = el("input", { type: "text", value: (p.settings.ticket_statuses || []).join(", ") });
   const wdir = el("input", { type: "text", value: p.working_dir || "", maxlength: 1024,
     placeholder: "/absolute/path (AGENTS.md is copied there)" });
+  const swd = dirField(wdir);
   const sysMsgs = el("input", { type: "checkbox" });
   sysMsgs.checked = p.settings.system_messages_enabled !== false;
 
@@ -431,7 +472,7 @@ Views.settings = async function () {
       el("div", { class: "field" }, el("label", {}, "Name"), name),
       el("div", { class: "field" }, el("label", {}, "Description"), desc),
       el("div", { class: "field" }, el("label", {}, "Ticket statuses (comma-separated, order = workflow)"), statuses),
-      el("div", { class: "field" }, el("label", {}, "Working Directory"), wdir),
+      el("div", { class: "field" }, el("label", {}, "Working Directory"), swd.row, swd.panel),
       el("label", { class: "checkline" }, sysMsgs, " Post system messages to #general on ticket/agent events"),
       el("button", { class: "btn primary", onclick: save }, "Save Settings")),
     el("div", { class: "card" },
