@@ -48,7 +48,9 @@ const API = {
   projects: (includeArchived) =>
     _req("GET", "/api/projects" + (includeArchived ? "?include_archived=true" : "")),
   project: (pid) => _req("GET", `/api/projects/${pid}`),
-  createProject: (name, description) => _req("POST", "/api/projects", { name, description }),
+  createProject: (name, description, working_dir) =>
+    _req("POST", "/api/projects", { name, description, working_dir: working_dir || "" }),
+  agentNotes: (pid, agentId) => _req("GET", `/api/projects/${pid}/agents/${agentId}/notes`),
   updateProject: (pid, patch) => _req("PATCH", `/api/projects/${pid}`, patch),
   archiveProject: (pid) => _req("POST", `/api/projects/${pid}/archive`),
   unarchiveProject: (pid) => _req("POST", `/api/projects/${pid}/unarchive`),

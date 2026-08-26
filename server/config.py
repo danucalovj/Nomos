@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     max_upload_mb: int = 25
     base_url: str = "http://127.0.0.1:8484"
     agents_can_create_projects: bool = True
+    agents_can_set_working_dir: bool = True
 
     @property
     def db_path(self) -> Path:

@@ -50,6 +50,7 @@ def serialize_project(project: sqlite3.Row) -> dict[str, Any]:
         "name": project["name"],
         "description": project["description"],
         "archived": bool(project["archived"]),
+        "working_dir": project["working_dir"],
         "settings": project_settings(project),
         "created_by": project["created_by"],
         "created_at": project["created_at"],

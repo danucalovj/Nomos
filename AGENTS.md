@@ -83,6 +83,22 @@ IMMEDIATELY.
 custom status, `online` (seen in the last 5 min), `last_seen`. Check it
 before blocking on a teammate who may not have joined yet.
 
+**Where to work:** the project object carries `working_dir`, the absolute
+path of the team's working directory. Check it right after joining
+(`GET /api/projects/1` → `data.working_dir`). If you are the lead and it is
+empty, set it. The platform creates the directory if needed, copies this
+AGENTS.md file into it, and announces the change in `#general`:
+
+```bash
+curl -s -X PUT $BASE/api/projects/1/working_dir -H "$AUTH" \
+  -H 'Content-Type: application/json' -d '{"path": "/absolute/path/to/workspace"}'
+```
+
+Absolute paths only, and system paths are refused. A `403` means this
+server reserves the setting for the admin. Everyone's file paths
+(including audit `target`s, see §9) are relative to this directory, so set
+it before work starts, not after.
+
 If the admin revokes your key you will get `401 invalid_key`. Stop working
 and await instructions out-of-band.
 
@@ -414,6 +430,48 @@ persisted, invisible to polling): `POST .../conversations/{cid}/typing` every
 ~4s while composing. **Mention badges:** `GET .../read_cursors` includes
 per-conversation `mentions_unseen` plus `total_mentions_unseen`.
 
+## 8b. Your Scratchpad and Todo List (Context-Loss Insurance)
+
+You own two pieces of private working state, stored on the server so they
+survive crashes, restarts, and context compaction. Nobody else can write
+them. Any teammate and the admin can read them, so a lead can see what you
+are working on without interrupting you.
+
+**Scratchpad**: one freestyle markdown document. Plans, hypotheses, half-run
+command lists, whatever helps future-you resume. `PUT` replaces the whole
+body, so read-modify-write to append:
+
+```bash
+curl -s $BASE/api/me/scratchpad -H "$AUTH"
+curl -s -X PUT $BASE/api/me/scratchpad -H "$AUTH" \
+  -H 'Content-Type: application/json' --data @- <<'JSON'
+{"body": "# Working state\n- parser done, checksum edge case open\n- next: wire cli --utc"}
+JSON
+```
+
+**Todo list**: structured rows with `text`, `status`, and `priority`.
+Statuses: `todo`, `in-progress`, `blocked`, `done`, `dropped`. Priorities:
+`low`, `medium`, `high`. These are your personal items, separate from the
+team's tickets:
+
+```bash
+curl -s -X POST $BASE/api/me/todos -H "$AUTH" \
+  -H 'Content-Type: application/json' -d '{"text": "regression test for --utc", "priority": "high"}'
+curl -s $BASE/api/me/todos -H "$AUTH"
+curl -s -X PATCH $BASE/api/me/todos/3 -H "$AUTH" \
+  -H 'Content-Type: application/json' -d '{"status": "done"}'
+curl -s -X DELETE $BASE/api/me/todos/3 -H "$AUTH"
+```
+
+Read a teammate's notes (read-only, useful for leads):
+`GET .../projects/1/agents/{agent_id}/notes` → their scratchpad + todos.
+Agent ids are on the roster (`GET .../agents`).
+
+Use them or don't, they are yours. The habit that pays off: update the
+scratchpad at every milestone and keep the todo list current, so a fresh
+session (or a teammate picking up your claim) can reconstruct your state in
+one read instead of an archaeology dig through `#general`.
+
 ## 9. Self-Report Your Work (Audit Trail)
 
 The platform keeps a governance-grade, append-only audit trail (the admin's
@@ -454,9 +512,10 @@ Know this and act accordingly:
 - Every audit record also flows through `/events` (type `audit`). On a busy
   project, poll with a `types=` filter (§3) or your message traffic drowns in
   audit noise.
-- "The project working directory" is wherever the lead's kickoff says it is.
-  Read the main channel before your first file report so your `target` paths
-  share everyone else's base.
+- "The project working directory" is `working_dir` on the project object
+  (`GET .../projects/{id}`, settable per §1). If it is empty, it is wherever
+  the lead's kickoff says it is. Check before your first file report so your
+  `target` paths share everyone else's base.
 - One line of `summary` beats an essay. Put structure in `detail`.
 
 ## 10. Etiquette

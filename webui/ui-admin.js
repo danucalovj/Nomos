@@ -166,22 +166,59 @@ function describeEvent(ev) {
 Views._createProjectModal = async function () {
   const name = el("input", { type: "text", placeholder: "Project name", maxlength: 100 });
   const desc = el("textarea", { rows: 3, placeholder: "Description (optional)" });
+  const wdir = el("input", { type: "text", placeholder: "/absolute/path/to/working/directory (optional)", maxlength: 1024 });
   const okd = await modal({
     title: "New Project",
     body: el("div", {}, el("div", { class: "field" }, el("label", {}, "Name"), name),
-      el("div", { class: "field" }, el("label", {}, "Description"), desc)),
+      el("div", { class: "field" }, el("label", {}, "Description"), desc),
+      el("div", { class: "field" }, el("label", {}, "Working Directory"), wdir,
+        el("div", { class: "hint" }, "AGENTS.md is copied there and agents discover it from the project."))),
     confirmText: "Create",
     onValidate: () => name.value.trim().length > 0,
   });
   if (!okd) return;
   try {
-    const p = await API.createProject(name.value.trim(), desc.value.trim());
+    const p = await API.createProject(name.value.trim(), desc.value.trim(), wdir.value.trim());
     toast("Project Created", p.name);
     location.hash = `#/p/${p.id}`;
   } catch (e) { toast("Create Failed", e.message, "error"); }
 };
 
 /* ---------- agent management ---------- */
+
+/* Read-only view of an agent's scratchpad + todo list (issue #26). */
+async function notesModal(pid, a) {
+  const body = el("div", { class: "notes-view" }, el("div", { class: "faint" }, "loading…"));
+  (async () => {
+    try {
+      const n = await API.agentNotes(pid, a.id);
+      const todoRows = (n.todos || []).map((t) => el("tr", {},
+        el("td", {}, t.text),
+        el("td", {}, el("span", { class: statusClass(t.status) }, t.status)),
+        el("td", { class: "t-chrome " + (t.priority === "high" ? "" : "faint") }, t.priority)));
+      body.replaceChildren(...[
+        el("div", { class: "t-micro" }, "Todo List"),
+        (n.todos || []).length
+          ? el("table", { class: "notes-todos" },
+              el("thead", {}, el("tr", {}, ...["Item", "Status", "Priority"].map((h) => el("th", {}, h)))),
+              el("tbody", {}, todoRows))
+          : el("p", { class: "faint" }, "No todos."),
+        el("div", { class: "t-micro", style: "margin-top:16px" }, "Scratchpad"),
+        n.scratchpad && n.scratchpad.body
+          ? renderMd(n.scratchpad.body)
+          : el("p", { class: "faint" }, "Empty."),
+        n.scratchpad && n.scratchpad.updated_at
+          ? el("div", { class: "t-chrome faint", style: "margin-top:8px" },
+              "updated " + fmtTime(n.scratchpad.updated_at))
+          : null,
+      ].filter(Boolean));
+    } catch (e) {
+      body.replaceChildren(el("p", { class: "danger-text" }, e.message));
+    }
+  })();
+  await modal({ title: `Notes — ${a.alias}`, body, confirmText: "Close" });
+}
+
 /* List-style popup (issue #18): rows navigate on click and close the modal.
    `load` returns [{label parts..., hash}] entries. */
 async function drilldownModal(title, load) {
@@ -269,6 +306,10 @@ Views.agentsAdmin = async function () {
               }));
             }),
           }, "Docs"),
+          el("button", {
+            class: "btn small", title: `${a.alias}'s scratchpad and todo list`,
+            onclick: () => notesModal(pid, a),
+          }, "Notes"),
           el("span", { class: "act-sep" }),
           !a.revoked ? el("button", {
             class: "btn small danger",
@@ -310,17 +351,23 @@ Views.settings = async function () {
   const name = el("input", { type: "text", value: p.name, maxlength: 100 });
   const desc = el("textarea", { rows: 3 }, p.description || "");
   const statuses = el("input", { type: "text", value: (p.settings.ticket_statuses || []).join(", ") });
+  const wdir = el("input", { type: "text", value: p.working_dir || "", maxlength: 1024,
+    placeholder: "/absolute/path (AGENTS.md is copied there)" });
   const sysMsgs = el("input", { type: "checkbox" });
   sysMsgs.checked = p.settings.system_messages_enabled !== false;
 
   const save = async () => {
     try {
-      await API.updateProject(pid, {
+      const patch = {
         name: name.value.trim(),
         description: desc.value,
         ticket_statuses: statuses.value.split(",").map((s) => s.trim()).filter(Boolean),
         system_messages_enabled: sysMsgs.checked,
-      });
+      };
+      if (wdir.value.trim() !== (p.working_dir || "")) {
+        patch.working_dir = wdir.value.trim(); // empty clears it
+      }
+      await API.updateProject(pid, patch);
       toast("Saved", "Project settings updated.");
       AC.state.project = await API.project(pid);
       const st = await API.projectStatuses(pid);
@@ -384,6 +431,7 @@ Views.settings = async function () {
       el("div", { class: "field" }, el("label", {}, "Name"), name),
       el("div", { class: "field" }, el("label", {}, "Description"), desc),
       el("div", { class: "field" }, el("label", {}, "Ticket statuses (comma-separated, order = workflow)"), statuses),
+      el("div", { class: "field" }, el("label", {}, "Working Directory"), wdir),
       el("label", { class: "checkline" }, sysMsgs, " Post system messages to #general on ticket/agent events"),
       el("button", { class: "btn primary", onclick: save }, "Save Settings")),
     el("div", { class: "card" },

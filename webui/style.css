@@ -1210,5 +1210,17 @@ select { font-family: var(--font-mono); font-size: 12px; }
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; font-family: var(--font-sans); font-size: 13px; font-weight: 500;
 }
+/* --------------------------------------------- agent notes (issue #26) */
+.notes-view { max-height: 60vh; overflow-y: auto; }
+.notes-view .t-micro { color: var(--text-faint); margin-bottom: 8px; }
+.notes-todos { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+.notes-todos th {
+  text-align: left; font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--text-faint);
+  padding: 4px 8px; border-bottom: 1px solid var(--line);
+}
+.notes-todos td { padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.danger-text { color: var(--danger); }
+
 .agent-actions { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
 .agent-actions .act-sep { width: 1px; height: 14px; background: var(--line); margin: 0 4px; flex: none; }

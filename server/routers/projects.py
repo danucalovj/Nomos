@@ -1,14 +1,16 @@
 """Project lifecycle: list/create/get (open), admin-only rename, settings,
-archive, and transactional cascade delete."""
+archive, working directory, and transactional cascade delete."""
 from __future__ import annotations
 
 import json
+import os
 import shutil
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from ..auth import Actor, AdminDep, get_actor
+from ..auth import Actor, AdminDep, check_project_access, get_actor
 from ..config import get_settings
 from ..db import query_all, query_one, transaction, utc_now
 from ..errors import ApiError, ok
@@ -18,8 +20,15 @@ from ..services import (
     DEFAULT_TICKET_STATUSES,
     create_project,
     get_project,
+    post_system_message,
+    require_not_archived,
     serialize_project,
 )
+from .audit import _forbidden_watch_path
+
+# The onboarding manual shipped at the repo root; copied into a project's
+# working directory when one is set so agents find it where they work.
+AGENTS_MD_PATH = Path(__file__).resolve().parents[2] / "AGENTS.md"
 
 router = APIRouter(tags=["projects"])
 
@@ -27,6 +36,7 @@ router = APIRouter(tags=["projects"])
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=2000)
+    working_dir: str = Field(default="", max_length=1024)
 
 
 class ProjectUpdate(BaseModel):
@@ -34,6 +44,60 @@ class ProjectUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     ticket_statuses: list[str] | None = None
     system_messages_enabled: bool | None = None
+    working_dir: str | None = Field(default=None, max_length=1024)
+
+
+class WorkingDirSet(BaseModel):
+    path: str = Field(min_length=1, max_length=1024)
+
+
+def _validate_working_dir(raw_path: str) -> Path:
+    """Path rules only, no filesystem writes. Absolute, non-system."""
+    if not raw_path.strip().startswith(("/", "~")):
+        raise ApiError(422, "invalid_path", "Working directory must be an absolute path.")
+    resolved = Path(raw_path).expanduser().resolve()
+    if _forbidden_watch_path(resolved):
+        raise ApiError(
+            422, "forbidden_path",
+            f"'{resolved}' is a system path and cannot be a working directory.",
+        )
+    return resolved
+
+
+def _apply_working_dir(project_id: int, raw_path: str, actor_alias: str) -> str:
+    """Validate the directory, create it if needed, copy AGENTS.md into it,
+    and persist it on the project. Returns the resolved path."""
+    resolved = _validate_working_dir(raw_path)
+    dest = resolved / "AGENTS.md"
+    try:
+        resolved.mkdir(parents=True, exist_ok=True)
+        # Never write through a symlink someone planted at the destination:
+        # copy to a fresh temp file, then rename over (replaces a symlink
+        # itself rather than following it).
+        if dest.is_symlink():
+            raise ApiError(
+                422, "invalid_path",
+                f"'{dest}' is a symlink; refusing to write through it.",
+            )
+        tmp = resolved / ".AGENTS.md.nomos-tmp"
+        shutil.copyfile(AGENTS_MD_PATH, tmp)
+        os.replace(tmp, dest)
+    except OSError as exc:
+        raise ApiError(422, "invalid_path", f"Cannot prepare '{resolved}': {exc}")
+    with transaction() as conn:
+        conn.execute(
+            "UPDATE projects SET working_dir = ?, updated_at = ? WHERE id = ?",
+            (str(resolved), utc_now(), project_id),
+        )
+        audit.platform_record(
+            conn, project_id, "other",
+            f"Working directory set to {resolved} (by {actor_alias}); AGENTS.md copied there",
+            target=str(resolved), actor=actor_alias,
+        )
+    post_system_message(
+        project_id, f"Working directory set to `{resolved}` (by {actor_alias})"
+    )
+    return str(resolved)
 
 
 @router.get("/projects")
@@ -50,7 +114,19 @@ async def create_project_endpoint(body: ProjectCreate, request: Request) -> dict
     actor: Actor = await get_actor(request)
     if not actor.is_admin and not get_settings().agents_can_create_projects:
         raise ApiError(403, "forbidden", "Agents may not create projects on this server.")
+    if body.working_dir.strip():
+        _validate_working_dir(body.working_dir.strip())  # fail before creating
     project = create_project(body.name, body.description, actor.alias)
+    if body.working_dir.strip():
+        try:
+            _apply_working_dir(project["id"], body.working_dir.strip(), actor.alias)
+        except ApiError:
+            # Filesystem prep failed after the insert: roll the project back
+            # so a failed create does not consume the name.
+            with transaction() as conn:
+                conn.execute("DELETE FROM projects WHERE id = ?", (project["id"],))
+            raise
+        project = serialize_project(get_project(project["id"]))
     setup_logging().info("project created %s", kv(project=project["id"], by=actor.alias))
     return ok(project)
 
@@ -103,7 +179,36 @@ async def update_project(project_id: int, body: ProjectUpdate, _admin: Actor = A
             "UPDATE projects SET settings = ?, updated_at = ? WHERE id = ?",
             (json.dumps(settings), utc_now(), project_id),
         )
+    if body.working_dir is not None:
+        if body.working_dir.strip():
+            _apply_working_dir(project_id, body.working_dir.strip(), "admin")
+        elif project["working_dir"]:
+            with transaction() as conn:
+                conn.execute(
+                    "UPDATE projects SET working_dir = '', updated_at = ? WHERE id = ?",
+                    (utc_now(), project_id),
+                )
+                audit.platform_record(
+                    conn, project_id, "other",
+                    "Working directory cleared (by admin)",
+                    target=project["working_dir"], actor="admin",
+                )
     return ok(serialize_project(get_project(project_id)))
+
+
+@router.put("/projects/{project_id}/working_dir")
+async def set_working_dir(project_id: int, body: WorkingDirSet, request: Request) -> dict:
+    """Set (or move) the project working directory. Open to the admin and,
+    when the server allows it, to any agent on the project (typically the
+    lead at kickoff). Copies AGENTS.md into the directory and announces the
+    change in #general."""
+    actor: Actor = await get_actor(request)
+    check_project_access(actor, project_id)
+    if not actor.is_admin and not get_settings().agents_can_set_working_dir:
+        raise ApiError(403, "forbidden", "Agents may not set the working directory on this server.")
+    require_not_archived(get_project(project_id))
+    resolved = _apply_working_dir(project_id, body.path.strip(), actor.alias)
+    return ok({"working_dir": resolved})
 
 
 @router.post("/projects/{project_id}/archive")

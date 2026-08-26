@@ -52,6 +52,62 @@ class ProfileUpdate(BaseModel):
     status_emoji: str | None = Field(default=None, max_length=64)
 
 
+# Per-agent working notes (issue #26). Owner-only writes through /api/me;
+# everyone on the project (and the admin) may read through the notes route.
+TODO_STATUSES = ("todo", "in-progress", "blocked", "done", "dropped")
+TODO_PRIORITIES = ("low", "medium", "high")
+
+
+class ScratchpadUpdate(BaseModel):
+    body: str = Field(max_length=256 * 1024)
+
+
+class TodoCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+    status: str = Field(default="todo")
+    priority: str = Field(default="medium")
+
+
+class TodoUpdate(BaseModel):
+    text: str | None = Field(default=None, min_length=1, max_length=500)
+    status: str | None = None
+    priority: str | None = None
+
+
+def _validate_todo_fields(status: str | None, priority: str | None) -> None:
+    if status is not None and status not in TODO_STATUSES:
+        raise ApiError(
+            422, "invalid_status",
+            f"Todo status must be one of: {', '.join(TODO_STATUSES)}.",
+        )
+    if priority is not None and priority not in TODO_PRIORITIES:
+        raise ApiError(
+            422, "invalid_priority",
+            f"Todo priority must be one of: {', '.join(TODO_PRIORITIES)}.",
+        )
+
+
+def _serialize_todo(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "agent_id": row["agent_id"],
+        "text": row["text"],
+        "status": row["status"],
+        "priority": row["priority"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _get_my_todo(agent: Actor, todo_id: int) -> sqlite3.Row:
+    row = query_all(
+        "SELECT * FROM agent_todos WHERE id = ? AND agent_id = ?", (todo_id, agent.agent_id)
+    )
+    if not row:
+        raise ApiError(404, "not_found", f"Todo {todo_id} does not exist on your list.")
+    return row[0]
+
+
 @router.post("/projects/{project_id}/agents/join", status_code=201)
 async def join_project(project_id: int, body: JoinRequest) -> dict:
     """Join a project under a unique alias. Returns the per-agent API key —
@@ -147,6 +203,87 @@ async def update_my_profile(body: ProfileUpdate, agent: Actor = AgentDep) -> dic
         append_event(conn, agent.project_id, "agent_updated", {"agent": profile})
     await notify(agent.project_id)
     return ok(profile)
+
+
+@router.get("/me/scratchpad")
+async def get_my_scratchpad(agent: Actor = AgentDep) -> dict:
+    assert agent.project_id is not None
+    row = get_agent(agent.project_id, agent.agent_id)
+    return ok({"body": row["scratchpad"], "updated_at": row["scratchpad_updated_at"]})
+
+
+@router.put("/me/scratchpad")
+async def put_my_scratchpad(body: ScratchpadUpdate, agent: Actor = AgentDep) -> dict:
+    """Replace the whole scratchpad. It is one freestyle markdown document,
+    yours alone to write; read-modify-write if you want to append."""
+    now = utc_now()
+    with transaction() as conn:
+        conn.execute(
+            "UPDATE agents SET scratchpad = ?, scratchpad_updated_at = ? WHERE id = ?",
+            (body.body, now, agent.agent_id),
+        )
+    return ok({"body": body.body, "updated_at": now})
+
+
+@router.get("/me/todos")
+async def list_my_todos(agent: Actor = AgentDep) -> dict:
+    rows = query_all(
+        "SELECT * FROM agent_todos WHERE agent_id = ? ORDER BY id", (agent.agent_id,)
+    )
+    return ok({"items": [_serialize_todo(r) for r in rows]})
+
+
+@router.post("/me/todos", status_code=201)
+async def create_my_todo(body: TodoCreate, agent: Actor = AgentDep) -> dict:
+    assert agent.project_id is not None
+    _validate_todo_fields(body.status, body.priority)
+    now = utc_now()
+    with transaction() as conn:
+        cur = conn.execute(
+            "INSERT INTO agent_todos (project_id, agent_id, text, status, priority, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (agent.project_id, agent.agent_id, body.text, body.status, body.priority, now, now),
+        )
+        todo_id = int(cur.lastrowid or 0)
+    return ok(_serialize_todo(query_all("SELECT * FROM agent_todos WHERE id = ?", (todo_id,))[0]))
+
+
+@router.patch("/me/todos/{todo_id}")
+async def update_my_todo(todo_id: int, body: TodoUpdate, agent: Actor = AgentDep) -> dict:
+    _get_my_todo(agent, todo_id)
+    _validate_todo_fields(body.status, body.priority)
+    with transaction() as conn:
+        for column, value in (("text", body.text), ("status", body.status), ("priority", body.priority)):
+            if value is not None:
+                conn.execute(f"UPDATE agent_todos SET {column} = ? WHERE id = ?", (value, todo_id))
+        conn.execute("UPDATE agent_todos SET updated_at = ? WHERE id = ?", (utc_now(), todo_id))
+    return ok(_serialize_todo(query_all("SELECT * FROM agent_todos WHERE id = ?", (todo_id,))[0]))
+
+
+@router.delete("/me/todos/{todo_id}")
+async def delete_my_todo(todo_id: int, agent: Actor = AgentDep) -> dict:
+    _get_my_todo(agent, todo_id)
+    with transaction() as conn:
+        conn.execute("DELETE FROM agent_todos WHERE id = ?", (todo_id,))
+    return ok({"deleted": todo_id})
+
+
+@router.get("/projects/{project_id}/agents/{agent_id}/notes")
+async def get_agent_notes(project_id: int, agent_id: int, request: Request) -> dict:
+    """Read-only view of another agent's scratchpad and todos. Any agent on
+    the project (a lead checking a teammate) and the admin can read; only the
+    owner can ever write, through /api/me."""
+    actor: Actor = await get_actor(request)
+    check_project_access(actor, project_id)
+    row = get_agent(project_id, agent_id)
+    todos = query_all(
+        "SELECT * FROM agent_todos WHERE agent_id = ? ORDER BY id", (agent_id,)
+    )
+    return ok({
+        "alias": row["alias"],
+        "scratchpad": {"body": row["scratchpad"], "updated_at": row["scratchpad_updated_at"]},
+        "todos": [_serialize_todo(t) for t in todos],
+    })
 
 
 @router.post("/projects/{project_id}/agents/{agent_id}/revoke")
