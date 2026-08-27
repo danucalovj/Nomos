@@ -7,6 +7,7 @@ import sqlite3
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from .. import audit
 from ..auth import (
     Actor,
     AdminDep,
@@ -17,7 +18,6 @@ from ..auth import (
     get_admin_alias,
     hash_key,
 )
-from .. import audit
 from ..avatars import is_valid_agent_avatar
 from ..db import query_all, transaction, utc_now
 from ..emoji import emoji_suggestions, is_valid_emoji
@@ -150,8 +150,8 @@ async def join_project(project_id: int, body: JoinRequest) -> dict:
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (project_id, alias, body.role, body.avatar, hash_key(api_key), now, now),
             )
-        except sqlite3.IntegrityError:
-            raise ApiError(409, "alias_taken", f"Alias '{alias}' is already taken in this project.")
+        except sqlite3.IntegrityError as exc:
+            raise ApiError(409, "alias_taken", f"Alias '{alias}' is already taken in this project.") from exc
         agent_id = int(cur.lastrowid or 0)
         main = get_main_channel(project_id)
         add_member(conn, main["id"], agent_id)

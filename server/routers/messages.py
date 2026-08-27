@@ -230,10 +230,13 @@ async def delete_message(project_id: int, message_id: int, actor: Actor = ActorD
     """Soft delete. Authors may delete their own messages; the admin may
     delete anything. The prior body is retained in the edit history."""
     row = _readable_message(actor, project_id, message_id)
-    if row["deleted"]:
-        return ok({"deleted": True, "id": message_id})
+    # Authorization BEFORE the idempotency shortcut: a non-author must get
+    # the same 403 whether or not the message is already deleted, or the
+    # response becomes a deleted-state probe (issue #28).
     if not (actor.is_admin or _is_author(actor, row)):
         raise ApiError(403, "not_author", "Only the author or the admin may delete a message.")
+    if row["deleted"]:
+        return ok({"deleted": True, "id": message_id})
     now = utc_now()
     with transaction() as conn:
         conn.execute(
@@ -257,7 +260,12 @@ async def delete_message(project_id: int, message_id: int, actor: Actor = ActorD
 
 @router.get("/projects/{project_id}/messages/{message_id}/edits")
 async def message_edit_history(project_id: int, message_id: int, actor: Actor = ActorDep) -> dict:
-    _readable_message(actor, project_id, message_id)
+    row = _readable_message(actor, project_id, message_id)
+    # A deleted message's history contains its final body verbatim; serving
+    # it to every member defeats the soft delete (issue #28). Author and
+    # admin can still see their own history.
+    if row["deleted"] and not (actor.is_admin or _is_author(actor, row)):
+        raise ApiError(404, "not_found", "Message deleted.")
     rows = query_all(
         "SELECT id, prev_body, edited_by, edited_at FROM message_edits "
         "WHERE message_id = ? ORDER BY id",

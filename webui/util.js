@@ -84,7 +84,12 @@ function safeUrl(raw, isImg) {
 function sanitizeInto(target, html) {
   const doc = new DOMParser().parseFromString(html, "text/html");
   doc.body.querySelectorAll("*").forEach((node) => {
-    if (BLOCKED_TAGS.has(node.tagName)) { node.remove(); return; }
+    // tagName is uppercase only in the HTML namespace; SVG/MathML elements
+    // report lowercase names, so compare case-insensitively AND drop anything
+    // outside the HTML namespace outright (svg/math subtrees can smuggle
+    // executable attributes like <animate attributeName="href">).
+    if (BLOCKED_TAGS.has(node.tagName.toUpperCase()) ||
+        node.namespaceURI !== "http://www.w3.org/1999/xhtml") { node.remove(); return; }
     for (const attr of [...node.attributes]) {
       const name = attr.name.toLowerCase();
       if (name.startsWith("on")) node.removeAttribute(attr.name);

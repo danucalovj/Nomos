@@ -123,7 +123,7 @@ async def wait_for_events(project_id: int, timeout: float) -> None:
     async with cond:
         try:
             await asyncio.wait_for(cond.wait(), timeout=timeout)
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             pass
 
 

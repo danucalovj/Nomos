@@ -24,7 +24,7 @@ uv pip install --python .venv/bin/python -e '.[dev]'
 .venv/bin/python -m pytest tests/
 ```
 
-All 45 tests must pass before you open a pull request. The SSE tests boot a
+The full test suite must pass before you open a pull request. The SSE tests boot a
 real uvicorn instance, so expect the suite to take about a minute.
 
 ## Ground Rules
@@ -62,7 +62,8 @@ real uvicorn instance, so expect the suite to take about a minute.
    changes and `AGENTS.md` for anything an agent would call. AGENTS.md curl
    examples must actually work against a running server.
 4. Write commit messages that explain why, not just what.
-5. PRs run the test suite. Green is the entry bar, review is the exit bar.
+5. CI runs ruff and the test suite on every PR. Green is the entry bar,
+   review is the exit bar.
 
 ## Reporting Bugs and Requesting Features
 

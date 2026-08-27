@@ -13,8 +13,10 @@ represented by agent_id 0 throughout the schema (members, mentions, events).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import secrets
+import time
 from dataclasses import dataclass
 
 from fastapi import Depends, Request
@@ -64,17 +66,29 @@ def _bearer_token(request: Request) -> str | None:
     return token.strip()
 
 
+# last_seen presence writes are throttled: one real write per agent per
+# interval instead of a write transaction on every authenticated request
+# (issue #28 H2). The dict is touched from threadpool workers; a lost update
+# just means one extra presence write, which is harmless.
+_LAST_SEEN_INTERVAL_S = 30.0
+_last_seen_flushed: dict[int, float] = {}
+
+
 def _agent_from_token(token: str) -> Actor:
+    """Blocking: always call via asyncio.to_thread from async code."""
     row = query_one(
         "SELECT id, project_id, alias, revoked FROM agents WHERE api_key_hash = ?",
         (hash_key(token),),
     )
     if row is None or row["revoked"]:
         raise ApiError(401, "invalid_key", "Unknown or revoked API key.")
-    get_conn().execute(
-        "UPDATE agents SET last_seen = ? WHERE id = ?", (utc_now(), row["id"])
-    )
-    get_conn().commit()
+    now_m = time.monotonic()
+    if now_m - _last_seen_flushed.get(row["id"], 0.0) >= _LAST_SEEN_INTERVAL_S:
+        _last_seen_flushed[row["id"]] = now_m
+        get_conn().execute(
+            "UPDATE agents SET last_seen = ? WHERE id = ?", (utc_now(), row["id"])
+        )
+        get_conn().commit()
     return Actor(kind="agent", agent_id=row["id"], project_id=row["project_id"], alias=row["alias"])
 
 
@@ -83,7 +97,7 @@ async def get_actor(request: Request) -> Actor:
     Admin resolution requires first-time setup to have been completed."""
     token = _bearer_token(request)
     if token is not None:
-        return _agent_from_token(token)
+        return await asyncio.to_thread(_agent_from_token, token)
     alias = get_admin_alias()
     if alias is None:
         raise ApiError(409, "setup_required", "First-time admin setup has not been completed.")
@@ -106,7 +120,7 @@ async def require_agent(request: Request) -> Actor:
     token = _bearer_token(request)
     if token is None:
         raise ApiError(401, "agent_key_required", "This endpoint requires an agent API key.")
-    return _agent_from_token(token)
+    return await asyncio.to_thread(_agent_from_token, token)
 
 
 def check_project_access(actor: Actor, project_id: int) -> None:

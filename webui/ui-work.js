@@ -57,9 +57,9 @@ Views.board = async function () {
   }
 
   const refresh = debounce(() => { if (location.hash.includes("/board")) Views.board(); }, 400);
-  AC.on("ticket_created", refresh);
-  AC.on("ticket_updated", refresh);
-  AC.on("board_updated", refresh);
+  AC.on("ticket_created", refresh, "wk-created");
+  AC.on("ticket_updated", refresh, "wk-updated");
+  AC.on("board_updated", refresh, "wk-board");
 };
 
 /* ---------- ticket list ---------- */
@@ -116,8 +116,8 @@ Views.tickets = async function () {
     listBox));
   await load();
   const refresh = debounce(load, 400);
-  AC.on("ticket_created", refresh);
-  AC.on("ticket_updated", refresh);
+  AC.on("ticket_created", refresh, "wk-created");
+  AC.on("ticket_updated", refresh, "wk-updated");
 };
 
 /* ---------- new ticket ---------- */
@@ -240,8 +240,8 @@ Views.ticketDetail = async function (n) {
   })();
 
   const refresh = debounce(() => { if (location.hash.endsWith(`/tickets/${n}`)) Views.ticketDetail(n); }, 500);
-  AC.on("ticket_updated", (pl) => { if ((pl.ticket && pl.ticket.number) === n) refresh(); });
-  AC.on("ticket_comment", (pl) => { if (pl.ticket_number === n) loadComments(); });
+  AC.on("ticket_updated", (pl) => { if ((pl.ticket && pl.ticket.number) === n) refresh(); }, "tdetail");
+  AC.on("ticket_comment", (pl) => { if (pl.ticket_number === n) loadComments(); }, "tdetail-c");
 };
 
 function buildTicketCommentComposer(pid, n, onPosted) {

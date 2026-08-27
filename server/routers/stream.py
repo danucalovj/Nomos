@@ -46,7 +46,7 @@ class MentionsSeen(BaseModel):
     all: bool = False
 
     @model_validator(mode="after")
-    def _some_target(self) -> "MentionsSeen":
+    def _some_target(self) -> MentionsSeen:
         if not self.all and not self.mention_ids:
             raise ValueError("Provide mention_ids or all=true.")
         return self
@@ -82,6 +82,15 @@ async def sse_stream(
         while True:
             if await request.is_disconnected():
                 return
+            # The Actor was resolved once at connect; re-check revocation on
+            # every wake-up so the kill switch actually severs live streams
+            # (issue #28 H7). Removal deletes the row, which also ends here.
+            if actor.kind == "agent":
+                row = query_one(
+                    "SELECT revoked FROM agents WHERE id = ?", (actor.agent_id,)
+                )
+                if row is None or row["revoked"]:
+                    return
             events = visible_events_since(actor, project_id, last_id, types=type_filter)
             for event in events:
                 last_id = event["id"]

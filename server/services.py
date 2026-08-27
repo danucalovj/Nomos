@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .auth import ADMIN_AGENT_ID, Actor, get_admin_alias
@@ -16,7 +16,9 @@ from .events import append_event
 
 ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,31}$")
 MENTION_RE = re.compile(r"(?<![\w`])@([A-Za-z0-9][A-Za-z0-9_.-]*)")
-TICKET_REF_RE = re.compile(r"(?<![\w&])#(\d+)\b")
+# Bounded digits: an unbounded int overflows SQLite's int64 binding and a
+# body like "#99999999999999999999" would 500 the whole request (issue #28 H11).
+TICKET_REF_RE = re.compile(r"(?<![\w&])#(\d{1,9})\b")
 
 DEFAULT_TICKET_STATUSES = ["open", "in-progress", "awaiting-human", "blocked", "done", "wontfix"]
 DEFAULT_BOARD_COLUMNS: list[tuple[str, list[str]]] = [
@@ -71,8 +73,8 @@ def create_project(name: str, description: str, created_by: str) -> dict[str, An
                 "VALUES (?, ?, ?, ?, ?)",
                 (name, description, created_by, now, now),
             )
-        except sqlite3.IntegrityError:
-            raise ApiError(409, "duplicate_name", f"A project named '{name}' already exists.")
+        except sqlite3.IntegrityError as exc:
+            raise ApiError(409, "duplicate_name", f"A project named '{name}' already exists.") from exc
         project_id = int(cur.lastrowid or 0)
         conn.execute(
             "INSERT INTO conversations (project_id, type, name, topic, is_main, created_by, created_at) "
@@ -325,18 +327,34 @@ def get_message(project_id: int, message_id: int) -> sqlite3.Row:
     return row
 
 
+def mention_candidates(raw: str) -> list[str]:
+    """A captured @mention may drag trailing sentence punctuation with it
+    ("ping @alice." captures "alice."), but aliases may ALSO legitimately end
+    in '.' or '-'. Try the longest form first, then progressively trim
+    trailing punctuation so both "@alice." and a real "@qa-" resolve (#28)."""
+    candidates = [raw]
+    trimmed = raw
+    while trimmed and trimmed[-1] in ".-":
+        trimmed = trimmed[:-1]
+        if trimmed:
+            candidates.append(trimmed)
+    return candidates
+
+
 def _extract_mentions(project_id: int, body: str) -> set[int]:
     """Mention targets in body: agent ids plus ADMIN_AGENT_ID for the admin.
     @here expands to every non-revoked agent in the project."""
     targets: set[int] = set()
     here = False
-    for alias in MENTION_RE.findall(body):
-        if alias.lower() == "here":
-            here = True
-            continue
-        resolved = resolve_alias(project_id, alias)
-        if resolved is not None:
-            targets.add(resolved[0])
+    for raw in MENTION_RE.findall(body):
+        for alias in mention_candidates(raw):
+            if alias.lower() == "here":
+                here = True
+                break
+            resolved = resolve_alias(project_id, alias)
+            if resolved is not None:
+                targets.add(resolved[0])
+                break
     if here:
         for r in query_all("SELECT id FROM agents WHERE project_id = ? AND revoked = 0", (project_id,)):
             targets.add(r["id"])
@@ -346,7 +364,16 @@ def _extract_mentions(project_id: int, body: str) -> set[int]:
 def record_ticket_links(
     conn: sqlite3.Connection, project_id: int, source_type: str, source_id: int, body: str
 ) -> list[int]:
-    """Register #N cross-links found in body; returns ticket numbers linked."""
+    """Register #N cross-links found in body; returns ticket numbers linked.
+
+    Links reflect the CURRENT body: the source's previous rows are dropped
+    first, so editing "#12" to "#13" retires the stale backlink instead of
+    accumulating both forever (issue #28 H10)."""
+    conn.execute(
+        "DELETE FROM ticket_links WHERE source_type = ? AND source_id = ? AND ticket_id IN "
+        "(SELECT id FROM tickets WHERE project_id = ?)",
+        (source_type, source_id, project_id),
+    )
     numbers = sorted({int(n) for n in TICKET_REF_RE.findall(body)})
     linked: list[int] = []
     for number in numbers:
@@ -425,10 +452,21 @@ def post_message(
                 raise ApiError(422, "bad_attachment",
                                f"Attachment {att_id} does not exist, is already attached, or is not yours.")
 
-        record_ticket_links(conn, project_id, "message", message_id, body)
+        # System messages narrate the board ("Ticket #12 status: ..."), so
+        # linking them would fill every ticket's backlinks with its own
+        # lifecycle chatter (issue #28). Only people-authored text links.
+        if msg_type != "system":
+            record_ticket_links(conn, project_id, "message", message_id, body)
 
         targets = _extract_mentions(project_id, body)
-        targets.discard(author_agent_id if author_type == "agent" else ADMIN_AGENT_ID)
+        # Self-mention suppression only: an agent doesn't get notified about
+        # its own message, nor the admin about theirs. System messages have
+        # no self — discarding ADMIN_AGENT_ID for them meant the escalation
+        # notices could never reach the admin (issue #28).
+        if author_type == "agent":
+            targets.discard(author_agent_id)
+        elif author_type == "admin":
+            targets.discard(ADMIN_AGENT_ID)
         for target in targets:
             conn.execute(
                 "INSERT INTO mentions (project_id, message_id, target_agent_id, created_at) "
@@ -468,7 +506,7 @@ def serialize_agent(row: sqlite3.Row) -> dict[str, Any]:
     if row["last_seen"]:
         try:
             seen = datetime.fromisoformat(row["last_seen"])
-            online = datetime.now(timezone.utc) - seen < timedelta(minutes=5)
+            online = datetime.now(UTC) - seen < timedelta(minutes=5)
         except ValueError:
             online = False
     return {
@@ -513,6 +551,10 @@ def touch_project(conn: sqlite3.Connection, project_id: int) -> None:
 def fts_quote(query: str) -> str:
     """Make arbitrary user input safe for FTS5 MATCH by quoting each token."""
     tokens = [t for t in re.split(r"\s+", query.strip()) if t]
+    if not tokens:
+        # An empty MATCH expression is an FTS5 syntax error (500); a query of
+        # pure whitespace should behave like "matches nothing" instead.
+        raise ApiError(422, "empty_query", "Search query must contain at least one term.")
     return " ".join('"' + t.replace('"', '""') + '"' for t in tokens)
 
 

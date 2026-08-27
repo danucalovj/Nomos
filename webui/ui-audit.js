@@ -354,6 +354,6 @@ Views.audit = async function () {
     if (empty) empty.remove();
     listEl.prepend(buildRow(rec));
     coverageRefresh();
-  });
-  AC.on("audit_anomaly", () => coverageRefresh());
+  }, "audit-live");
+  AC.on("audit_anomaly", () => coverageRefresh(), "audit-anom");
 };

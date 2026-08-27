@@ -2,19 +2,18 @@
 from __future__ import annotations
 
 import time
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 
-from . import db
+from . import db, fsmonitor
 from .config import get_settings
 from .errors import install_error_handlers
 from .logging_setup import kv, setup_logging
 from .migrate import run_migrations
-from . import fsmonitor
 from .routers import (
     agents,
     attachments,

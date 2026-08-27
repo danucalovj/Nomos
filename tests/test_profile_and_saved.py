@@ -162,7 +162,7 @@ def test_forwarded_attachment_downloadable_by_target_members(client, project):
     """Codex review fix: a live forward grants the target conversation's
     members access to the original's attachments."""
     pid = project["id"]
-    a, b = project["a"]["headers"], project["b"]["headers"]
+    a = project["a"]["headers"]
     dm = unwrap(
         client.post(f"/api/projects/{pid}/dms", json={"with": project["b"]["alias"]}, headers=a),
         201,

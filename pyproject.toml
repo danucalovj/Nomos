@@ -17,8 +17,23 @@ dependencies = [
 dev = [
     "pytest==8.3.5",
     "pytest-asyncio==0.26.0",
+    "ruff==0.16.4",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",   # long lines: docs-heavy comments, not worth churn
+    "B008",   # FastAPI Depends() in defaults is the framework idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402", "F811"]

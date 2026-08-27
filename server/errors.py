@@ -5,9 +5,11 @@ Error:    {"ok": false, "error": {"code": "<slug>", "message": "<human text>", .
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -61,6 +63,21 @@ def install_error_handlers(app: FastAPI) -> None:
             content=error_body(
                 "validation_error",
                 "Request validation failed.",
-                {"details": exc.errors()},
+                # errors() can carry non-serializable objects (exception ctx,
+                # UploadFile inputs); encode or the error response itself 500s.
+                {"details": jsonable_encoder(exc.errors())},
             ),
+        )
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
+        # The envelope is the documented contract for ALL errors — clients
+        # parse body["ok"] unconditionally, so even a bug must not surface as
+        # Starlette's plain-text 500 (issue #28). Full traceback to the log.
+        logging.getLogger("nomos").exception(
+            "unhandled error on %s %s", request.method, request.url.path
+        )
+        return JSONResponse(
+            status_code=500,
+            content=error_body("internal_error", "Internal server error."),
         )

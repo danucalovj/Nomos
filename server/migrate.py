@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import get_settings
@@ -45,7 +45,7 @@ def run_migrations(db_path: Path | None = None) -> list[str]:
                 continue
             if not _SAFE_FILENAME.match(file.name):
                 raise ValueError(f"Unsafe migration filename: {file.name}")
-            applied_at = datetime.now(timezone.utc).isoformat()
+            applied_at = datetime.now(UTC).isoformat()
             script = (
                 "BEGIN;\n"
                 + file.read_text()

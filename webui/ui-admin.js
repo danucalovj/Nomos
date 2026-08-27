@@ -380,8 +380,8 @@ Views.agentsAdmin = async function () {
             el("p", {}, `Agents join via POST /api/projects/${pid}/agents/join — see /api/docs.`))),
     agents.length ? el("p", { class: "hint" },
       "Agents join via POST /api/projects/" + pid + "/agents/join — see /api/docs.") : null));
-  AC.on("agent_joined", () => Views.agentsAdmin());
-  AC.on("agent_updated", () => Views.agentsAdmin());
+  AC.on("agent_joined", () => Views.agentsAdmin(), "agents");
+  AC.on("agent_updated", () => Views.agentsAdmin(), "agents-upd");
 };
 
 /* ---------- project settings ---------- */

@@ -238,8 +238,11 @@ async def export(project_id: int, format: str = "jsonl", actor: Actor = ActorDep
     stamp = utc_now()[:10]
     if format == "csv":
         buf = io.StringIO()
-        fields = ["id", "created_at", "actor", "actor_type", "source", "action",
-                  "target", "summary", "detail", "correlated_id", "prev_hash", "entry_hash"]
+        # project_id and diff are part of the hash preimage: omitting them
+        # made offline chain re-verification impossible from a CSV (#28).
+        fields = ["id", "project_id", "created_at", "actor", "actor_type", "source",
+                  "action", "target", "summary", "detail", "diff", "correlated_id",
+                  "prev_hash", "entry_hash"]
         writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         for r in rows:

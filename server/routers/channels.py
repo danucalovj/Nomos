@@ -117,8 +117,8 @@ async def create_channel(project_id: int, body: ChannelCreate, actor: Actor = Ac
                 "VALUES (?, 'channel', ?, ?, ?, ?)",
                 (project_id, name, body.topic, actor.alias, now),
             )
-        except sqlite3.IntegrityError:
-            raise ApiError(409, "duplicate_name", f"A channel named '{name}' already exists.")
+        except sqlite3.IntegrityError as exc:
+            raise ApiError(409, "duplicate_name", f"A channel named '{name}' already exists.") from exc
         conversation_id = int(cur.lastrowid or 0)
         if not actor.is_admin:
             add_member(conn, conversation_id, actor.agent_id)

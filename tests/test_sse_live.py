@@ -49,7 +49,7 @@ def live_server() -> Iterator[str]:
                 break
             except httpx.TransportError:
                 if proc.poll() is not None:
-                    raise RuntimeError("uvicorn exited early")
+                    raise RuntimeError("uvicorn exited early") from None
                 time.sleep(0.2)
         else:
             raise RuntimeError("server did not come up")
@@ -134,3 +134,41 @@ def test_sse_backlog_live_and_reconnect(live_server):
         assert any(
             e[0] == "message" and e[1]["id"] == posted_3["id"] for e in replay
         ), f"reconnect replay lost message {posted_3['id']}: {replay}"
+
+
+def test_revocation_severs_live_stream(live_server):
+    """Issue #28 H7: revoking a key must terminate the agent's open SSE
+    stream, not just reject new requests."""
+    base = live_server
+    with httpx.Client(base_url=base, timeout=10) as c:
+        c.post("/api/setup", json={"alias": "op", "color": "#d99a2b", "avatar": "admin"})
+        pid = c.post("/api/projects", json={"name": "Sever"}).json()["data"]["id"]
+        joined = c.post(
+            f"/api/projects/{pid}/agents/join", json={"alias": "doomed"}
+        ).json()["data"]
+        headers = {"Authorization": f"Bearer {joined['api_key']}"}
+        agent_id = joined["agent"]["id"]
+
+        with c.stream(
+            "GET", f"/api/projects/{pid}/stream?since_id=0", headers=headers
+        ) as resp:
+            assert resp.status_code == 200
+            # Revoke mid-stream; the resulting agent_revoked event wakes the
+            # generator, which re-checks and closes.
+            c.post(f"/api/projects/{pid}/agents/{agent_id}/revoke")
+            start = time.monotonic()
+            closed = False
+            try:
+                for _line in resp.iter_lines():
+                    if time.monotonic() - start > 15:
+                        break
+            except (httpx.ReadTimeout, httpx.RemoteProtocolError):
+                closed = True
+            else:
+                closed = True  # iterator exhausted: server ended the stream
+            elapsed = time.monotonic() - start
+            assert closed and elapsed < 15, "stream survived revocation"
+
+        # And the key itself is dead for new requests.
+        after = c.get(f"/api/projects/{pid}/tickets", headers=headers)
+        assert after.status_code == 401

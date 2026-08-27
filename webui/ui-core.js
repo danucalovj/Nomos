@@ -418,7 +418,17 @@ const AC = {
   _bus: {},
   _busGen: 0,
   busReset() { AC._bus = {}; AC._busGen++; },
-  on(type, fn) { (AC._bus[type] = AC._bus[type] || []).push({ fn, gen: AC._busGen }); },
+  // `key` makes registration idempotent: a view that re-renders itself on an
+  // event re-registers every render, and without replacement the bucket
+  // doubles per event (2^k handlers — issue #28 H12).
+  on(type, fn, key) {
+    const bucket = (AC._bus[type] = AC._bus[type] || []);
+    if (key !== undefined) {
+      const i = bucket.findIndex((h) => h.key === key);
+      if (i !== -1) bucket.splice(i, 1);
+    }
+    bucket.push({ fn, gen: AC._busGen, key });
+  },
 
   handleEvent(type, payload) {
     AC.wire(type, payload);

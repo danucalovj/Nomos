@@ -113,7 +113,7 @@ def test_filters_and_platform_mirror(client, project):
     summaries = " | ".join(r["summary"] for r in platform_rows)
     assert f"Ticket #{t['number']} claimed by {a['alias']}" in summaries
     assert f"Document '{doc['slug']}' created" in summaries
-    assert any(f"joined" in r["summary"] for r in platform_rows)  # join mirror
+    assert any("joined" in r["summary"] for r in platform_rows)  # join mirror
 
     only_actor = unwrap(
         client.get(f"/api/projects/{pid}/audit?actor={a['alias']}&source=platform",
@@ -128,7 +128,7 @@ def test_export_jsonl_reverifies_offline(client, project):
     resp = client.get(f"/api/projects/{pid}/audit/export?format=jsonl",
                       headers=project["a"]["headers"])
     assert resp.status_code == 200
-    lines = [json.loads(l) for l in resp.text.strip().splitlines()]
+    lines = [json.loads(ln) for ln in resp.text.strip().splitlines()]
     assert lines
     # offline re-verification exactly as documented: canonical form is a
     # compact JSON array [prev_hash, project_id, actor, actor_type, source,

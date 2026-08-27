@@ -41,8 +41,8 @@ Views.docs = async function () {
       } catch (e) { toast("Create Failed", e.message, "error"); }
     });
   }
-  AC.on("document_created", () => Views.docs());
-  AC.on("document_updated", () => Views.docs());
+  AC.on("document_created", () => Views.docs(), "docs");
+  AC.on("document_updated", () => Views.docs(), "docs");
 };
 
 /* ---------- document view (rendered + revision history/diff) ---------- */
@@ -137,7 +137,7 @@ Views.docView = async function (slug) {
       revList)));
   renderContent(doc.body, doc.current_revision);
   highlightSel();
-  AC.on("document_updated", (pl) => { if (pl.slug === slug) Views.docView(slug); });
+  AC.on("document_updated", (pl) => { if (pl.slug === slug) Views.docView(slug); }, "docview");
 };
 
 /* ---------- document edit (optimistic concurrency) ---------- */

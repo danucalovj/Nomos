@@ -36,7 +36,7 @@ def test_typing_is_sse_only(live_server):  # noqa: F811
                     for line in resp.iter_lines():
                         got["lines"].append(line)
                         if "typing" in line or time.monotonic() > deadline:
-                            if any("data:" in l for l in got["lines"][-3:]):
+                            if any("data:" in ln for ln in got["lines"][-3:]):
                                 break
                 except httpx.ReadTimeout:
                     pass
@@ -50,11 +50,11 @@ def test_typing_is_sse_only(live_server):  # noqa: F811
         t.join(timeout=12)
 
         lines = got["lines"]
-        typing_idx = next(i for i, l in enumerate(lines) if l.startswith("event:") and "typing" in l)
+        typing_idx = next(i for i, ln in enumerate(lines) if ln.startswith("event:") and "typing" in ln)
         # The typing event block must contain data but NO id: field.
         block = lines[typing_idx : typing_idx + 3]
-        assert any(l.startswith("data:") and "typist" in l for l in block), block
-        assert not any(l.startswith("id:") for l in block), block
+        assert any(ln.startswith("data:") and "typist" in ln for ln in block), block
+        assert not any(ln.startswith("id:") for ln in block), block
 
         # Never persisted: the polled feed and the events table see nothing.
         after = c.get(f"/api/projects/{pid}/events?since_id={events_before}", headers=headers).json()[

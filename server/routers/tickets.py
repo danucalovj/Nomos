@@ -9,14 +9,15 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from .. import audit
 from ..auth import ADMIN_AGENT_ID, Actor, AdminDep, AgentDep, check_project_access, get_actor
 from ..db import query_all, query_one, transaction, utc_now
 from ..errors import ApiError, ok
-from .. import audit
 from ..events import append_event, notify
 from ..services import (
     MENTION_RE,
     get_project,
+    mention_candidates,
     pagination_window,
     post_system_message,
     project_settings,
@@ -112,7 +113,7 @@ def _validate_priority(priority: str) -> str:
 
 
 def _validate_labels(labels: list[str]) -> str:
-    cleaned = [l.strip() for l in labels if l.strip()]
+    cleaned = [label.strip() for label in labels if label.strip()]
     if len(cleaned) > 20:
         raise ApiError(422, "too_many_labels", "At most 20 labels per ticket.")
     return json.dumps(cleaned)
@@ -131,13 +132,15 @@ def _mention_targets(project_id: int, body: str) -> set[int]:
     """Same semantics as message mentions: @alias, @here, admin included."""
     targets: set[int] = set()
     here = False
-    for alias in MENTION_RE.findall(body):
-        if alias.lower() == "here":
-            here = True
-            continue
-        resolved = resolve_alias(project_id, alias)
-        if resolved is not None:
-            targets.add(resolved[0])
+    for raw in MENTION_RE.findall(body):
+        for alias in mention_candidates(raw):
+            if alias.lower() == "here":
+                here = True
+                break
+            resolved = resolve_alias(project_id, alias)
+            if resolved is not None:
+                targets.add(resolved[0])
+                break
     if here:
         for r in query_all(
             "SELECT id FROM agents WHERE project_id = ? AND revoked = 0", (project_id,)
@@ -263,6 +266,23 @@ async def update_ticket_fields(
     return serialize_ticket(get_ticket_row(project_id, number))
 
 
+def _emit_assigned_at_creation(
+    conn: sqlite3.Connection, project_id: int, row: sqlite3.Row, by_alias: str
+) -> None:
+    """Targeted ticket_assigned for tickets born with an assignee (issue #28),
+    mirroring the reassignment path. Self-assignment is not news."""
+    if not row["assignee"]:
+        return
+    resolved = resolve_alias(project_id, row["assignee"])
+    if resolved is not None and resolved[1] != by_alias:
+        append_event(
+            conn, project_id, "ticket_assigned",
+            {"ticket_number": row["number"], "title": row["title"],
+             "assignee": resolved[1], "by": by_alias},
+            target_agent_id=resolved[0],
+        )
+
+
 def serialize_ticket_row_in_txn(row: sqlite3.Row) -> dict[str, Any]:
     """Serialize without issuing new queries on other tables (safe mid-txn)."""
     return {
@@ -310,6 +330,10 @@ async def create_ticket(project_id: int, body: TicketCreate, request: Request) -
             conn, project_id, "ticket_created",
             {"ticket": serialize_ticket_row_in_txn(row), "by": actor.alias},
         )
+        # Assignment at creation must reach the assignee's targeted feed the
+        # same way a later reassignment does (issue #28): an agent filtering
+        # types=ticket_assigned otherwise never hears about it.
+        _emit_assigned_at_creation(conn, project_id, row, actor.alias)
     post_system_message(project_id, f"Ticket #{number} created: {body.title} (by {actor.alias})")
     await notify(project_id)
     return ok(serialize_ticket(get_ticket_row(project_id, number)))
@@ -391,7 +415,8 @@ async def get_ticket(project_id: int, number: int, request: Request) -> dict:
         FROM ticket_links l
         LEFT JOIN messages m ON l.source_type = 'message' AND m.id = l.source_id
         LEFT JOIN ticket_comments c ON l.source_type = 'ticket_comment' AND c.id = l.source_id
-        WHERE l.ticket_id = ?{visibility}
+        WHERE l.ticket_id = ?
+          AND (l.source_type != 'message' OR m.deleted = 0){visibility}
         ORDER BY l.id DESC LIMIT 50
         """,
         tuple(params),
@@ -430,6 +455,10 @@ async def claim_ticket(project_id: int, number: int, agent: Actor = AgentDep) ->
     require_not_archived(project)
     now = utc_now()
     with transaction() as conn:
+        before = conn.execute(
+            "SELECT status FROM tickets WHERE project_id = ? AND number = ?",
+            (project_id, number),
+        ).fetchone()
         cur = conn.execute(
             "UPDATE tickets SET assignee = ?, "
             "status = CASE WHEN status = 'open' THEN 'in-progress' ELSE status END, "
@@ -457,10 +486,15 @@ async def claim_ticket(project_id: int, number: int, agent: Actor = AgentDep) ->
             f"Ticket #{number} claimed by {agent.alias} (status: {row['status']})",
             target=f"#{number}", actor=agent.alias,
         )
+        # The claim can flip status too (open -> in-progress); the event must
+        # say so or SSE consumers watching status never see the move (#28).
+        changes: dict = {"assignee": {"from": None, "to": agent.alias}}
+        if before is not None and before["status"] != row["status"]:
+            changes["status"] = {"from": before["status"], "to": row["status"]}
         append_event(
             conn, project_id, "ticket_updated",
             {"ticket": serialize_ticket_row_in_txn(row),
-             "changes": {"assignee": {"from": None, "to": agent.alias}},
+             "changes": changes,
              "by": agent.alias},
         )
     post_system_message(project_id, f"Ticket #{number} claimed by {agent.alias}")
@@ -623,6 +657,7 @@ async def create_tickets_bulk(project_id: int, body: TicketBulkCreate, request: 
                 conn, project_id, "ticket_created",
                 {"ticket": serialize_ticket_row_in_txn(row), "by": actor.alias},
             )
+            _emit_assigned_at_creation(conn, project_id, row, actor.alias)
             numbers.append(number)
     first, last = numbers[0], numbers[-1]
     label = f"#{first}" if first == last else f"#{first}–#{last}"

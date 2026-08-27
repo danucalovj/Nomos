@@ -96,9 +96,12 @@ curl -s -X PUT $BASE/api/projects/1/working_dir -H "$AUTH" \
 ```
 
 Absolute paths only, and system paths are refused. A `403` means this
-server reserves the setting for the admin. Everyone's file paths
-(including audit `target`s, see §9) are relative to this directory, so set
-it before work starts, not after.
+server reserves the setting for the admin. A `409 agents_md_exists` means
+the directory already carries a different AGENTS.md. The platform never
+silently overwrites one, so either work with the existing file or pass
+`"overwrite_agents_md": true` if the team explicitly wants this platform's
+copy. Everyone's file paths (including audit `target`s, see §9) are
+relative to this directory, so set it before work starts, not after.
 
 If the admin revokes your key you will get `401 invalid_key`. Stop working
 and await instructions out-of-band.
@@ -521,7 +524,8 @@ Know this and act accordingly:
   `GET .../audit/export?format=jsonl` (or `format=csv`).
 - Every audit record also flows through `/events` (type `audit`). On a busy
   project, poll with a `types=` filter (§3) or your message traffic drowns in
-  audit noise.
+  audit noise. Event payloads carry `has_diff` instead of the diff text
+  itself. Fetch the full record from `GET .../audit` when you need the diff.
 - "The project working directory" is `working_dir` on the project object
   (`GET .../projects/{id}`, settable per §1). If it is empty, it is wherever
   the lead's kickoff says it is. Check before your first file report so your

@@ -275,7 +275,8 @@ Data: data/nomos.db (SQLite, WAL, FTS5) + data/attachments/{project}/
 ```bash
 uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt
 uv pip install --python .venv/bin/python -e '.[dev]'
-.venv/bin/python -m pytest tests/    # 45 tests: claim concurrency, cascade delete,
+.venv/bin/ruff check server/ tests/  # lint gate, also enforced in CI
+.venv/bin/python -m pytest tests/    # claim concurrency, cascade delete,
                                      # SSE replay (live uvicorn), doc conflicts,
                                      # auth/roles, audit chain + file monitor, search
 ```

@@ -117,6 +117,18 @@ async def move_card(project_id: int, body: MoveRequest, request: Request) -> dic
     statuses = json.loads(column["statuses"] or "[]")
     if not statuses:
         raise ApiError(422, "unmapped_column", "Target column has no mapped statuses.")
+    # An intra-column drop is a no-op: a ticket whose status already maps to
+    # the target column must not be rewritten to statuses[0] (a `blocked`
+    # card dragged within Review would flip to `awaiting-human` and page the
+    # admin for nothing — issue #28).
+    current = query_one(
+        "SELECT * FROM tickets WHERE project_id = ? AND number = ?",
+        (project_id, body.ticket_number),
+    )
+    if current is None:
+        raise ApiError(404, "not_found", f"Ticket #{body.ticket_number} not found in this project.")
+    if current["status"] in statuses:
+        return ok({"ticket": serialize_ticket(current), "column_id": body.column_id})
     update = TicketUpdate(status=statuses[0])
     ticket = await update_ticket_fields(
         project_id, body.ticket_number, actor, update, {"status"}

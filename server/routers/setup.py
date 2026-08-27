@@ -82,9 +82,12 @@ async def update_admin_identity(body: AdminIdentityUpdate, _admin: Actor = Admin
             raise ApiError(409, "alias_taken", "An agent already uses that alias.")
     if body.avatar is not None and not is_valid_admin_avatar(body.avatar):
         raise ApiError(422, "invalid_avatar", "Unknown avatar.")
-    changed = [c for c, v in (("alias", body.alias), ("color", body.color), ("avatar", body.avatar)) if v is not None]
+    # Store the STRIPPED alias — persisting the raw padded value would break
+    # @mention resolution and alias reservation for the admin (issue #28).
+    new_alias = body.alias.strip() if body.alias is not None else None
+    changed = [c for c, v in (("alias", new_alias), ("color", body.color), ("avatar", body.avatar)) if v is not None]
     with transaction() as conn:
-        for column, value in (("alias", body.alias), ("color", body.color), ("avatar", body.avatar)):
+        for column, value in (("alias", new_alias), ("color", body.color), ("avatar", body.avatar)):
             if value is not None:
                 conn.execute(f"UPDATE admin_identity SET {column} = ? WHERE id = 1", (value,))
         # Governance mirror: identity changes touch every project's trail.

@@ -11,11 +11,10 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from datetime import datetime, timedelta, timezone
-
-from .db import query_all, query_one, utc_now
+from .db import get_conn, query_one, utc_now
 from .events import append_event
 
 ACTIONS = (
@@ -85,7 +84,10 @@ def record(
             "id": audit_id, "project_id": project_id, "actor": actor,
             "actor_type": actor_type, "source": source, "action": action,
             "target": target, "summary": summary, "detail": detail_json,
-            "diff": diff, "correlated_id": correlated_id,
+            # The event is a notification, not the record of truth: embedding
+            # the full diff persisted every monitored edit TWICE at up to
+            # 64KB each (issue #28). Readers fetch diffs from /audit.
+            "has_diff": diff is not None, "correlated_id": correlated_id,
             "prev_hash": prev_hash, "entry_hash": entry_hash,
             "created_at": created_at,
         }),
@@ -124,7 +126,10 @@ def serialize_row_dict(d: dict[str, Any]) -> dict[str, Any]:
         "target": d["target"],
         "summary": d["summary"],
         "detail": d["detail"],
-        "diff": d["diff"],
+        # DB rows carry the full diff; the event path passes has_diff instead
+        # so the trail is not persisted twice at full size (issue #28).
+        "diff": d.get("diff"),
+        "has_diff": d.get("has_diff", d.get("diff") is not None),
         "correlated_id": d["correlated_id"],
         "prev_hash": d["prev_hash"],
         "entry_hash": d["entry_hash"],
@@ -139,7 +144,7 @@ def serialize_row_dict(d: dict[str, Any]) -> dict[str, Any]:
 # later self_report points back at it.
 
 def _window_cutoff() -> str:
-    return (datetime.now(timezone.utc) - timedelta(seconds=CORRELATION_WINDOW_S)).isoformat()
+    return (datetime.now(UTC) - timedelta(seconds=CORRELATION_WINDOW_S)).isoformat()
 
 
 def find_recent_observation(
@@ -181,13 +186,16 @@ def find_recent_claim(
 
 
 def verify_chain(project_id: int) -> dict[str, Any]:
-    """Recompute the whole chain; report ok / first divergence.
-    Cheap single scan, exposed to every reader."""
-    rows = query_all(
+    """Recompute the whole chain; report ok / first divergence. Streams the
+    cursor instead of fetchall — rows carry up to 64KB diffs each, and a
+    long-lived trail must not be loaded into memory at once (issue #28)."""
+    cursor = get_conn().execute(
         "SELECT * FROM audit_log WHERE project_id = ? ORDER BY id", (project_id,)
     )
     prev = GENESIS
-    for r in rows:
+    checked = 0
+    for r in cursor:
+        checked += 1
         expected = _entry_hash(
             prev,
             [r["project_id"], r["actor"], r["actor_type"], r["source"], r["action"],
@@ -195,9 +203,9 @@ def verify_chain(project_id: int) -> dict[str, Any]:
              r["created_at"]],
         )
         if r["prev_hash"] != prev or r["entry_hash"] != expected:
-            return {"ok": False, "checked": len(rows), "first_divergence": r["id"]}
+            return {"ok": False, "checked": checked, "first_divergence": r["id"]}
         prev = r["entry_hash"]
-    return {"ok": True, "checked": len(rows), "first_divergence": None}
+    return {"ok": True, "checked": checked, "first_divergence": None}
 
 
 def get_watch(project_id: int) -> sqlite3.Row | None:

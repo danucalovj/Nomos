@@ -26,23 +26,32 @@ class Settings(BaseSettings):
     @property
     def db_path(self) -> Path:
         # Renamed from agentcomms.db (issue #22). Adopt a pre-rename database
-        # in place the first time we see one; -wal/-shm ride along so an
-        # uncheckpointed WAL is never orphaned. Called from every thread-local
-        # connect, so the adoption is locked and re-checked; a rename lost to
-        # a concurrent process is tolerated (the winner already moved it).
+        # in place the first time we see one. The sidecars (-wal, -shm) move
+        # FIRST and the main .db moves LAST, so the main file's existence is a
+        # correct completion flag: a concurrent thread either sees the legacy
+        # db (and waits on the lock) or sees a fully-adopted set — never a
+        # renamed db whose committed pages still live in an un-renamed WAL
+        # (issue #28 H3). The whole check runs under the lock for the same
+        # reason, and any OSError (not just FileNotFoundError) is tolerated:
+        # the loser of a cross-process race must not crash a property getter.
         new = self.data_dir / "nomos.db"
         legacy = self.data_dir / "agentcomms.db"
-        if legacy.exists() and not new.exists():
-            with _adopt_lock:
-                if legacy.exists() and not new.exists():
-                    for suffix in ("", "-wal", "-shm"):
-                        src = Path(str(legacy) + suffix)
-                        try:
-                            if src.exists():
-                                src.rename(str(new) + suffix)
-                        except FileNotFoundError:
-                            pass
-        return new
+        with _adopt_lock:
+            if legacy.exists() and not new.exists():
+                for suffix in ("-wal", "-shm", ""):
+                    src = Path(str(legacy) + suffix)
+                    try:
+                        if src.exists():
+                            src.rename(str(new) + suffix)
+                    except FileNotFoundError:
+                        pass  # lost a cross-process race: the winner moved it
+                    except OSError:
+                        # A REAL sidecar failure must abort before the main db
+                        # is renamed, or committed pages could be left behind
+                        # under the legacy name. Keep using the legacy file;
+                        # adoption retries on the next call.
+                        return legacy
+        return new if new.exists() or not legacy.exists() else legacy
 
     @property
     def attachments_dir(self) -> Path:

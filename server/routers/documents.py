@@ -9,10 +9,10 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from .. import audit
 from ..auth import Actor, check_project_access, get_actor
 from ..db import query_all, query_one, transaction, utc_now
 from ..errors import ApiError, ok
-from .. import audit
 from ..events import append_event, notify
 from ..services import (
     get_project,
@@ -97,8 +97,8 @@ async def create_document(project_id: int, body: DocumentCreate, request: Reques
                 "VALUES (?, ?, ?, 1, ?, ?)",
                 (project_id, slug, title, now, now),
             )
-        except sqlite3.IntegrityError:
-            raise ApiError(409, "duplicate_slug", f"Document '{slug}' already exists in this project.")
+        except sqlite3.IntegrityError as exc:
+            raise ApiError(409, "duplicate_slug", f"Document '{slug}' already exists in this project.") from exc
         doc_id = int(cur.lastrowid or 0)
         conn.execute(
             "INSERT INTO document_revisions (document_id, revision, title, body, author, created_at) "

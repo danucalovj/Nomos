@@ -13,7 +13,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .config import get_settings
@@ -24,7 +24,7 @@ _local = threading.local()
 def utc_now() -> str:
     """ISO 8601 UTC timestamp with microseconds (monotonic enough for ordering
     together with autoincrement ids, which are the true ordering key)."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def get_conn() -> sqlite3.Connection:
@@ -65,11 +65,16 @@ def transaction() -> Iterator[sqlite3.Connection]:
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield conn
-    except BaseException:
-        conn.rollback()
-        raise
-    else:
+        # commit() lives INSIDE the try: if it fails, the rollback below runs
+        # and the connection leaves the transaction. Otherwise one failed
+        # commit would poison this thread's connection forever (issue #28).
         conn.commit()
+    except BaseException:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            close_conn()  # unrecoverable connection state: recycle it
+        raise
 
 
 def query_all(sql: str, params: tuple | dict = ()) -> list[sqlite3.Row]:

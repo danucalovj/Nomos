@@ -6,7 +6,7 @@ import io
 import json
 import re
 import tarfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -302,7 +302,7 @@ async def metrics(project_id: int, request: Request) -> dict:
             (project_id,),
         )
     }
-    threshold = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    threshold = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     active = query_all(
         "SELECT * FROM agents WHERE project_id = ? AND revoked = 0 AND last_seen >= ? "
         "ORDER BY last_seen DESC",
@@ -353,7 +353,7 @@ async def export_project(project_id: int, _admin: Actor = AdminDep) -> FileRespo
     settings = get_settings()
     exports_dir = settings.data_dir / "exports"
     exports_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     filename = f"nomos-export-{project_id}-{stamp}.tar.gz"
     tar_path = exports_dir / filename
 

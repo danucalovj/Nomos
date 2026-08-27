@@ -6,16 +6,17 @@ import asyncio
 import json
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from .. import audit, fsmonitor
 from ..auth import Actor, AdminDep, check_project_access, get_actor
 from ..config import get_settings
 from ..db import query_all, query_one, transaction, utc_now
 from ..errors import ApiError, ok
-from .. import audit
 from ..logging_setup import kv, setup_logging
 from ..services import (
     DEFAULT_TICKET_STATUSES,
@@ -38,6 +39,7 @@ class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=2000)
     working_dir: str = Field(default="", max_length=1024)
+    overwrite_agents_md: bool = False
 
 
 class ProjectUpdate(BaseModel):
@@ -46,10 +48,12 @@ class ProjectUpdate(BaseModel):
     ticket_statuses: list[str] | None = None
     system_messages_enabled: bool | None = None
     working_dir: str | None = Field(default=None, max_length=1024)
+    overwrite_agents_md: bool = False
 
 
 class WorkingDirSet(BaseModel):
     path: str = Field(min_length=1, max_length=1024)
+    overwrite_agents_md: bool = False
 
 
 def _validate_working_dir(raw_path: str) -> Path:
@@ -65,7 +69,9 @@ def _validate_working_dir(raw_path: str) -> Path:
     return resolved
 
 
-def _apply_working_dir(project_id: int, raw_path: str, actor_alias: str) -> str:
+def _apply_working_dir(
+    project_id: int, raw_path: str, actor_alias: str, overwrite: bool = False
+) -> str:
     """Validate the directory, create it if needed, copy AGENTS.md into it,
     and persist it on the project. Returns the resolved path."""
     resolved = _validate_working_dir(raw_path)
@@ -80,11 +86,28 @@ def _apply_working_dir(project_id: int, raw_path: str, actor_alias: str) -> str:
                 422, "invalid_path",
                 f"'{dest}' is a symlink; refusing to write through it.",
             )
-        tmp = resolved / ".AGENTS.md.nomos-tmp"
-        shutil.copyfile(AGENTS_MD_PATH, tmp)
-        os.replace(tmp, dest)
+        # Never silently destroy somebody's existing AGENTS.md (issue #28 H6).
+        # The common target is a real repo that already carries one. Identical
+        # content is fine (idempotent re-set); different content requires the
+        # caller to say overwrite_agents_md explicitly.
+        ours = AGENTS_MD_PATH.read_bytes()
+        if dest.exists() and not overwrite and dest.read_bytes() != ours:
+            raise ApiError(
+                409, "agents_md_exists",
+                f"'{dest}' already exists with different content. Pass "
+                "overwrite_agents_md=true to replace it, or move it aside first.",
+            )
+        # Unguessable, exclusively-created temp file (mkstemp uses O_EXCL and
+        # never follows a pre-planted symlink), then atomic rename over dest.
+        fd, tmp_name = tempfile.mkstemp(prefix=".AGENTS.md.", dir=resolved)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(ours)
+            os.replace(tmp_name, dest)
+        finally:
+            Path(tmp_name).unlink(missing_ok=True)
     except OSError as exc:
-        raise ApiError(422, "invalid_path", f"Cannot prepare '{resolved}': {exc}")
+        raise ApiError(422, "invalid_path", f"Cannot prepare '{resolved}': {exc}") from exc
     with transaction() as conn:
         conn.execute(
             "UPDATE projects SET working_dir = ?, updated_at = ? WHERE id = ?",
@@ -101,13 +124,27 @@ def _apply_working_dir(project_id: int, raw_path: str, actor_alias: str) -> str:
     return str(resolved)
 
 
+async def _scoped_serialize(request: Request, row) -> dict:
+    """Open discovery is by design (the join flow needs it), but working_dir
+    is an absolute host path: only the admin and the project's own agents get
+    to see it (issue #28). Everyone else gets the row with it blanked."""
+    try:
+        actor: Actor | None = await get_actor(request)
+    except ApiError:
+        actor = None  # pre-setup or bad key: discovery still works, path hidden
+    data = serialize_project(row)
+    if actor is None or (not actor.is_admin and actor.project_id != row["id"]):
+        data["working_dir"] = ""
+    return data
+
+
 @router.get("/projects")
-async def list_projects(include_archived: bool = False) -> dict:
+async def list_projects(request: Request, include_archived: bool = False) -> dict:
     """Open endpoint: prospective agents must be able to discover projects
     before they hold a key."""
     where = "" if include_archived else "WHERE archived = 0"
     rows = query_all(f"SELECT * FROM projects {where} ORDER BY id")
-    return ok({"items": [serialize_project(r) for r in rows]})
+    return ok({"items": [await _scoped_serialize(request, r) for r in rows]})
 
 
 @router.post("/projects", status_code=201)
@@ -120,7 +157,7 @@ async def create_project_endpoint(body: ProjectCreate, request: Request) -> dict
     project = create_project(body.name, body.description, actor.alias)
     if body.working_dir.strip():
         try:
-            _apply_working_dir(project["id"], body.working_dir.strip(), actor.alias)
+            _apply_working_dir(project["id"], body.working_dir.strip(), actor.alias, body.overwrite_agents_md)
         except ApiError:
             # Filesystem prep failed after the insert: roll the project back
             # so a failed create does not consume the name.
@@ -133,7 +170,7 @@ async def create_project_endpoint(body: ProjectCreate, request: Request) -> dict
 
 
 @router.get("/projects/{project_id}")
-async def get_project_endpoint(project_id: int) -> dict:
+async def get_project_endpoint(project_id: int, request: Request) -> dict:
     project = get_project(project_id)
     counts = query_one(
         """
@@ -145,7 +182,7 @@ async def get_project_endpoint(project_id: int) -> dict:
         """,
         {"pid": project_id},
     )
-    data = serialize_project(project)
+    data = await _scoped_serialize(request, project)
     data["counts"] = dict(counts) if counts else {}
     return ok(data)
 
@@ -182,7 +219,7 @@ async def update_project(project_id: int, body: ProjectUpdate, _admin: Actor = A
         )
     if body.working_dir is not None:
         if body.working_dir.strip():
-            _apply_working_dir(project_id, body.working_dir.strip(), "admin")
+            _apply_working_dir(project_id, body.working_dir.strip(), "admin", body.overwrite_agents_md)
         elif project["working_dir"]:
             with transaction() as conn:
                 conn.execute(
@@ -231,8 +268,8 @@ async def browse_dirs(path: str = "", _admin: Actor = AdminDep) -> dict:
 
     try:
         dirs, truncated = await asyncio.to_thread(_scan)
-    except PermissionError:
-        raise ApiError(403, "forbidden", f"Cannot read '{base}': permission denied.")
+    except PermissionError as exc:
+        raise ApiError(403, "forbidden", f"Cannot read '{base}': permission denied.") from exc
     return ok({
         "path": str(base),
         "parent": str(base.parent) if base != base.parent else None,
@@ -254,7 +291,7 @@ async def set_working_dir(project_id: int, body: WorkingDirSet, request: Request
     if not actor.is_admin and not get_settings().agents_can_set_working_dir:
         raise ApiError(403, "forbidden", "Agents may not set the working directory on this server.")
     require_not_archived(get_project(project_id))
-    resolved = _apply_working_dir(project_id, body.path.strip(), actor.alias)
+    resolved = _apply_working_dir(project_id, body.path.strip(), actor.alias, body.overwrite_agents_md)
     return ok({"working_dir": resolved})
 
 
@@ -304,6 +341,9 @@ async def delete_project(project_id: int, _admin: Actor = AdminDep) -> dict:
             conn.execute("DELETE FROM documents_fts WHERE rowid = ?", (doc_id,))
         for fts in ("messages_fts", "tickets_fts", "ticket_comments_fts"):
             conn.execute(f"INSERT INTO {fts} ({fts}) VALUES ('rebuild')")
+    # The live monitor task would otherwise keep scanning (and failing to
+    # write audit rows for a dead project id) until shutdown — issue #28 H8.
+    fsmonitor.stop_watch(project_id)
     attachments_dir = get_settings().attachments_dir / str(project_id)
     attachments_removed = True
     if attachments_dir.exists():
