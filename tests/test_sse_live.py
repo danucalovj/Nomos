@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -56,7 +57,12 @@ def live_server() -> Iterator[str]:
         yield base
     finally:
         proc.send_signal(signal.SIGTERM)
-        proc.wait(timeout=10)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        shutil.rmtree(data_dir, ignore_errors=True)
 
 
 def _read_sse_events(resp: httpx.Response, want: int, deadline_s: float = 10) -> list[tuple[str, dict, int]]:

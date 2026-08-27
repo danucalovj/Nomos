@@ -292,12 +292,21 @@ Views.audit = async function () {
     return p.toString();
   }
 
+  let loadGen = 0; // bumped on filter change: in-flight responses go stale
   async function loadPage() {
     if (loading) return;
     loading = true;
     moreBtn.disabled = true;
+    const gen = loadGen;
     try {
       const d = await _req("GET", `/api/projects/${pid}/audit?${queryString(oldestId)}`);
+      if (gen !== loadGen) {
+        // Filters changed while this request was in flight: drop the stale
+        // rows and immediately load the current filter's page (issue #29).
+        loading = false;
+        loadPage();
+        return;
+      }
       const items = d.items || [];
       for (const rec of items) {
         listEl.append(buildRow(rec));
@@ -312,6 +321,14 @@ Views.audit = async function () {
           el("p", {}, "Agents self-report their work here, and the file monitor observes the working directory once a watch is registered.")));
       }
     } catch (e) {
+      if (gen !== loadGen) {
+        // Same stale-recovery as the success path: the filter changed while
+        // this request failed, so load the CURRENT filter instead of
+        // leaving the pane empty until the next user action.
+        loading = false;
+        loadPage();
+        return;
+      }
       listEl.replaceChildren(el("div", { class: "empty" }, el("p", {}, e.message)));
     }
     loading = false;
@@ -319,10 +336,11 @@ Views.audit = async function () {
   }
 
   function reload() {
+    loadGen++;
     rows.clear();
     oldestId = null;
     listEl.replaceChildren();
-    loadPage();
+    if (!loading) loadPage();
   }
 
   /* ---------- assemble ---------- */

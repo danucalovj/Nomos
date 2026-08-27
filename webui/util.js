@@ -77,7 +77,10 @@ function safeUrl(raw, isImg) {
   const cleaned = String(raw).replace(/[\u0000-\u0020]/g, "").toLowerCase();
   if (isImg && cleaned.startsWith("data:image/")) return true;
   if (/^(https?|mailto):/.test(cleaned)) return true;
-  if (cleaned.includes(":")) return false; // any other explicit scheme
+  // A colon only denotes a scheme in the LEADING position (RFC 3986). A
+  // colon later in a relative URL ("/api/logs?at=12:30", "#step-2:notes")
+  // is data; rejecting it broke legitimate links (issue #29).
+  if (/^[a-z][a-z0-9+.\-]*:/.test(cleaned)) return false; // unknown scheme
   return true; // relative URL or fragment
 }
 
@@ -223,7 +226,9 @@ function lineDiff(aText, bText) {
   const a = String(aText || "").split("\n");
   const b = String(bText || "").split("\n");
   const n = a.length, m = b.length;
-  // DP table of LCS lengths (fine for document-sized inputs)
+  // The DP table is O(n*m) memory on the main thread: two 10k-line
+  // revisions would allocate ~400MB (issue #29). Refuse pathological sizes.
+  if (n * m > 4_000_000) return null;
   const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
   for (let i = n - 1; i >= 0; i--)
     for (let j = m - 1; j >= 0; j--)
@@ -242,9 +247,22 @@ function lineDiff(aText, bText) {
 
 function renderDiff(aText, bText) {
   const wrap = el("div", { class: "diff-view" });
-  for (const d of lineDiff(aText, bText)) {
+  const diff = lineDiff(aText, bText);
+  if (diff === null) {
+    wrap.append(el("div", { class: "diff-line hunk" },
+      "Revisions too large to diff inline. Open each revision instead."));
+    return wrap;
+  }
+  const MAX = 400; // matches the unified-diff renderer's cap
+  let shown = 0;
+  for (const d of diff) {
+    if (shown >= MAX) break;
     const prefix = d.type === "add" ? "+ " : d.type === "del" ? "- " : "  ";
     wrap.append(el("div", { class: "diff-line " + d.type }, prefix + d.line));
+    shown++;
+  }
+  if (diff.length > MAX) {
+    wrap.append(el("div", { class: "diff-line hunk" }, `… ${diff.length - MAX} more lines`));
   }
   return wrap;
 }

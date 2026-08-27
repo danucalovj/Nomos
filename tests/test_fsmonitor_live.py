@@ -30,6 +30,9 @@ def test_monitor_end_to_end(live_server):  # noqa: F811
     workdir = Path(tempfile.mkdtemp(prefix="audit-watch-"))
     (workdir / "pre_existing.txt").write_text("already here\n")
 
+    # Failure-path teardown note: the live_server fixture SIGTERMs uvicorn at
+    # module end, which cancels the watch task regardless of assertion
+    # outcomes; the explicit delete below covers the success path.
     with httpx.Client(base_url=base, timeout=15) as c:
         assert c.post("/api/setup", json={"alias": "overseer"}).status_code == 201
         pid = c.post("/api/projects", json={"name": "watched"}).json()["data"]["id"]
@@ -40,7 +43,13 @@ def test_monitor_end_to_end(live_server):  # noqa: F811
         assert reg.status_code == 201, reg.text
         assert reg.json()["data"]["watch"]["active"] is True
 
-        time.sleep(4.5)  # let the baseline scan land
+        # Wait until the monitor has PROVABLY scanned at least once (the old
+        # all-negative assertion passed identically when the watch never
+        # started), then assert baseline silence.
+        scanned = _wait_for(lambda: (
+            c.get(f"/api/projects/{pid}/audit/watch", headers=auth)
+            .json()["data"]["watch"] or {}).get("last_scan"))
+        assert scanned, "watch never completed a scan"
         assert not _audit(c, pid, auth, source="monitor"), "baseline must be silent"
 
         # 1. Claimed change: self-report FIRST, then touch the file.
@@ -54,11 +63,14 @@ def test_monitor_end_to_end(live_server):  # noqa: F811
         assert observed[0]["claimed"] is True
         assert "+plus a new line" in (observed[0]["diff"] or "")
 
-        # 2. Unattributed change: no self-report.
-        (workdir / "sneaky.py").write_text("print('nobody claimed this')\n")
+        # 2. Unattributed change in a NESTED directory: no self-report, and
+        # the monitor target must carry the relative sub-path.
+        (workdir / "sub" / "dir").mkdir(parents=True)
+        (workdir / "sub" / "dir" / "sneaky.py").write_text("print('nobody claimed this')\n")
         sneaky = _wait_for(lambda: _audit(c, pid, auth, source="monitor", target="sneaky"))
         assert sneaky and sneaky[0]["action"] == "file_create"
         assert sneaky[0]["claimed"] is False
+        assert sneaky[0]["target"] == "sub/dir/sneaky.py"
 
         anomalies = _wait_for(lambda: [
             e for e in c.get(f"/api/projects/{pid}/events?since_id=0&types=audit_anomaly").json()["data"]["items"]
@@ -73,7 +85,7 @@ def test_monitor_end_to_end(live_server):  # noqa: F811
         assert not agent_events
 
         # 3. Deletion observed.
-        (workdir / "sneaky.py").unlink()
+        (workdir / "sub" / "dir" / "sneaky.py").unlink()
         deleted = _wait_for(lambda: [
             r for r in _audit(c, pid, auth, source="monitor", target="sneaky")
             if r["action"] == "file_delete"

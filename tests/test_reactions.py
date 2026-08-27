@@ -3,10 +3,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi.testclient import TestClient
-
 from server.db import query_all
-from server.main import app
 
 from .conftest import unwrap
 
@@ -120,12 +117,13 @@ def test_concurrent_toggles_never_duplicate(client, project):
     key = project["b"]["key"]
 
     def toggle(_: int) -> int:
-        with TestClient(app) as c:
-            return c.post(
-                f"/api/projects/{pid}/messages/{msg['id']}/reactions",
-                json={"emoji": "fire"},
-                headers={"Authorization": f"Bearer {key}"},
-            ).status_code
+        # Shared client: see test_claim_concurrency for why nesting
+        # TestClient per worker was hazardous.
+        return client.post(
+            f"/api/projects/{pid}/messages/{msg['id']}/reactions",
+            json={"emoji": "fire"},
+            headers={"Authorization": f"Bearer {key}"},
+        ).status_code
 
     with ThreadPoolExecutor(max_workers=10) as pool:
         results = list(pool.map(toggle, range(10)))
@@ -135,4 +133,4 @@ def test_concurrent_toggles_never_duplicate(client, project):
         "SELECT COUNT(*) AS c FROM message_reactions WHERE message_id = ? AND emoji = 'fire'",
         (msg["id"],),
     )
-    assert rows[0]["c"] in (0, 1)  # even toggle count -> 0, odd -> 1; never dupes
+    assert rows[0]["c"] == 0  # 10 toggles is an even count: net zero, never dupes

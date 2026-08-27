@@ -48,9 +48,14 @@ def test_typing_is_sse_only(live_server):  # noqa: F811
         assert r.status_code == 200
         assert r.json()["data"]["expires_in"] == 6
         t.join(timeout=12)
+        assert not t.is_alive(), "SSE listener thread outlived its window"
 
         lines = got["lines"]
-        typing_idx = next(i for i, ln in enumerate(lines) if ln.startswith("event:") and "typing" in ln)
+        typing_idx = next(
+            (i for i, ln in enumerate(lines) if ln.startswith("event:") and "typing" in ln),
+            None,
+        )
+        assert typing_idx is not None, f"no typing event observed in stream: {lines}"
         # The typing event block must contain data but NO id: field.
         block = lines[typing_idx : typing_idx + 3]
         assert any(ln.startswith("data:") and "typist" in ln for ln in block), block

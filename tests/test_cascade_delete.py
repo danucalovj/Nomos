@@ -2,6 +2,7 @@
 in any table, attachment files removed from disk."""
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 from server.config import get_settings
@@ -19,6 +20,12 @@ TABLES_WITH_PROJECT_ID = [
     "board_columns",
     "documents",
     "events",
+    "message_reactions",
+    "saved_items",
+    "emoji_usage",
+    "agent_todos",
+    "audit_log",
+    "audit_watches",
 ]
 
 
@@ -64,6 +71,42 @@ def _populate(client, project) -> tuple[int, Path]:
         ),
         201,
     )
+    # Referenced AFTER the ticket exists, so a ticket_links row is really
+    # written (the old ordering made the post-delete assertion vacuous).
+    ref_msg = unwrap(
+        client.post(
+            f"/api/projects/{pid}/conversations/{main}/messages",
+            json={"body": f"work happening on #{t['number']}"},
+            headers=a,
+        ),
+        201,
+    )
+    assert query_one(
+        "SELECT COUNT(*) AS c FROM ticket_links WHERE source_type = 'message' AND source_id = ?",
+        (ref_msg["id"],),
+    )["c"] == 1
+    # Rows in every remaining project-scoped table.
+    unwrap(
+        client.post(
+            f"/api/projects/{pid}/messages/{ref_msg['id']}/reactions",
+            json={"emoji": "thumbsup"},
+            headers=b,
+        )
+    )
+    unwrap(client.post(f"/api/projects/{pid}/messages/{ref_msg['id']}/save", headers=b))
+    unwrap(
+        client.post("/api/me/todos", json={"text": "cascade fodder"}, headers=a), 201
+    )
+    unwrap(
+        client.post(
+            f"/api/projects/{pid}/audit",
+            json={"action": "other", "summary": "cascade fodder"},
+            headers=a,
+        ),
+        201,
+    )
+    watch_dir = tempfile.mkdtemp(prefix="nomos-cascade-watch-")
+    unwrap(client.post(f"/api/projects/{pid}/audit/watch", json={"path": watch_dir}), 201)
     unwrap(
         client.post(
             f"/api/projects/{pid}/documents",

@@ -277,7 +277,7 @@ Views.search = async function () {
       meta = `document · ${h.slug || h.title || ""}`;
       if (h.slug) target = `#/p/${pid}/docs/${encodeURIComponent(h.slug)}`;
     }
-    const snippetHtml = h.snippet || esc(h.excerpt || h.body || "").slice(0, 200);
+    const snippetHtml = h.snippet || esc(String(h.excerpt || h.body || "").slice(0, 200));
     // snippet comes from FTS with <mark> tags; sanitize it through the same path
     const snip = el("div", {});
     sanitizeInto(snip, snippetHtml);

@@ -48,7 +48,7 @@ Views.setup = async function () {
     const alias = aliasInput.value.trim();
     if (!alias) { toast("Setup", "Choose an alias first.", "warn"); return; }
     try {
-      const data = await _req("POST", "/api/setup", { alias, color, avatar });
+      const data = await API.completeSetup(alias, color, avatar);
       AC.state.setupComplete = true;
       AC.state.adminAlias = data.admin.alias;
       AC.state.adminColor = data.admin.color;
@@ -488,8 +488,14 @@ Views.settings = async function () {
       el("div", { class: "rail-title", style: "color:var(--danger)" }, "Danger Zone"),
       el("div", { class: "row", style: "gap:12px" },
         p.archived
-          ? el("button", { class: "btn", onclick: async () => { await API.unarchiveProject(pid); toast("Unarchived", p.name); AC.state.project = await API.project(pid); Views.settings(); } }, "Unarchive Project")
-          : el("button", { class: "btn", onclick: async () => { await API.archiveProject(pid); toast("Archived", p.name + " is now read-only."); AC.state.project = await API.project(pid); Views.settings(); } }, "Archive Project (Read-Only)"),
+          ? el("button", { class: "btn", onclick: async () => {
+              try { await API.unarchiveProject(pid); toast("Unarchived", p.name); AC.state.project = await API.project(pid); Views.settings(); }
+              catch (e) { toast("Error", e.message, "error"); }
+            } }, "Unarchive Project")
+          : el("button", { class: "btn", onclick: async () => {
+              try { await API.archiveProject(pid); toast("Archived", p.name + " is now read-only."); AC.state.project = await API.project(pid); Views.settings(); }
+              catch (e) { toast("Error", e.message, "error"); }
+            } }, "Archive Project (Read-Only)"),
         el("button", {
           class: "btn danger",
           onclick: async () => {

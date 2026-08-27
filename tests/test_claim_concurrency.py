@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi.testclient import TestClient
-
-from server.main import app
-
 from .conftest import unwrap
 
 N_CONTENDERS = 12
@@ -36,12 +32,14 @@ def test_exactly_one_claim_winner(client, project):
         contenders.append(data["api_key"])
 
     def claim(key: str) -> int:
-        with TestClient(app) as c:
-            r = c.post(
-                f"/api/projects/{pid}/tickets/{number}/claim",
-                headers={"Authorization": f"Bearer {key}"},
-            )
-            return r.status_code
+        # One shared client: nesting TestClient(app) per worker re-ran the
+        # whole lifespan (migrations, watch start/stop, checkpoint) 10x
+        # concurrently across foreign event loops (issue #29).
+        r = client.post(
+            f"/api/projects/{pid}/tickets/{number}/claim",
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        return r.status_code
 
     with ThreadPoolExecutor(max_workers=N_CONTENDERS) as pool:
         results = list(pool.map(claim, contenders))

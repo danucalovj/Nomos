@@ -53,15 +53,21 @@ def test_chain_verifies_and_detects_tamper(client, project):
     # Tamper directly in SQLite (bypassing the API, which has no mutation route)
     conn = get_conn()
     row = query_all(
-        "SELECT id FROM audit_log WHERE project_id = ? ORDER BY id LIMIT 1", (pid,)
+        "SELECT id, summary FROM audit_log WHERE project_id = ? ORDER BY id LIMIT 1", (pid,)
     )[0]
+    original_summary = row["summary"]
     conn.execute("UPDATE audit_log SET summary = 'rewritten history' WHERE id = ?", (row["id"],))
     conn.commit()
     v = unwrap(client.get(f"/api/projects/{pid}/audit/verify"))
     assert v["ok"] is False
     assert v["first_divergence"] == row["id"]
-    conn.execute("UPDATE audit_log SET summary = 'step 0' WHERE id = ?", (row["id"],))
+    # Restore the ORIGINAL value (row 1 is a platform join row, not "step 0")
+    # and prove the chain verifies clean again — the old restore left it
+    # permanently diverged without anything noticing.
+    conn.execute("UPDATE audit_log SET summary = ? WHERE id = ?", (original_summary, row["id"]))
     conn.commit()
+    v = unwrap(client.get(f"/api/projects/{pid}/audit/verify"))
+    assert v["ok"] is True
 
 
 def test_append_only_surface(client, project):
@@ -71,7 +77,7 @@ def test_append_only_surface(client, project):
         r = getattr(client, method)(
             f"/api/projects/{pid}/audit/{rec['id']}", headers=project["a"]["headers"]
         )
-        assert r.status_code in (404, 405), f"{method} must not exist"
+        assert r.status_code == 405, f"{method} must not exist"
 
 
 def test_bulk_atomic(client, project):

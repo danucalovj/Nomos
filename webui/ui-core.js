@@ -44,9 +44,10 @@ const AC = {
     }
     // Emoji vocabulary (status emoji in the sidebar, reactions later). Not in
     // api.js yet — fetched directly; failure is cosmetic only.
-    fetch("/api/emoji").then((r) => r.json()).then((p) => {
+    try {
+      const p = await (await fetch("/api/emoji")).json();
       if (p && p.ok) AC.state.emojiMap = p.data.emoji || {};
-    }).catch(() => {});
+    } catch (e) { /* cosmetic only */ }
     window.addEventListener("hashchange", () => AC.route());
     document.getElementById("statusbar").addEventListener("click", () => {
       if (AC.state.pid) location.hash = `#/p/${AC.state.pid}/activity`;
@@ -119,12 +120,19 @@ const AC = {
     if (!AC.state.setupComplete) { Views.setup(); return; }
     AC.busReset();
     AC.closeThreadPanel();
+    // Overlay roots must not survive navigation (their own outside-close
+    // listeners are one-shot and self-remove on the next pointer event).
+    document.getElementById("lightbox-root").replaceChildren();
+    document.getElementById("popover-root").replaceChildren();
 
     try {
       if (parts.length === 0) { await AC.leaveProject(); await Views.dashboard(); }
       else if (parts[0] === "p" && parts[1]) {
         const pid = Number(parts[1]);
         await AC.enterProject(pid);
+        // Sidebar "+" handlers live for the whole route, on EVERY project
+        // view — per-view registration left them dead on most (issue #29).
+        registerSidebarAdders();
         const sub = parts[2] || "chat";
         if (sub === "chat" || sub === "c") await Views.projectChat(parts[3] ? Number(parts[3]) : null, parts[5] ? Number(parts[5]) : null);
         else if (sub === "board") await Views.board();
@@ -138,7 +146,7 @@ const AC = {
         else if (sub === "agents") await Views.agentsAdmin();
         else if (sub === "settings") await Views.settings();
         else if (sub === "decisions") await Views.decisions();
-        else if (Views[sub]) await Views[sub]();
+        else if (Object.prototype.hasOwnProperty.call(Views, sub)) await Views[sub]();
         else await Views.projectChat(null, null);
       } else { location.hash = "#/"; return; }
     } catch (e) {
@@ -455,7 +463,12 @@ const AC = {
   _dispatch(type, payload) {
     for (const entry of AC._bus[type] || []) {
       if (entry.gen !== AC._busGen) continue; // stale route's listener
-      try { entry.fn(payload); } catch (e) { console.error("event handler failed", type, e); }
+      try {
+        const r = entry.fn(payload);
+        if (r && typeof r.catch === "function") {
+          r.catch((e) => console.error("event handler failed", type, e));
+        }
+      } catch (e) { console.error("event handler failed", type, e); }
     }
   },
 

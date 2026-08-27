@@ -59,43 +59,47 @@ function conversationChoices() {
   return chans.concat(dms);
 }
 
-/* ---------- sidebar "+" handlers (register in every project view) ---------- */
+/* ---------- sidebar "+" handlers (registered centrally per route) ---------- */
 function registerSidebarAdders() {
-  AC.on("sidebar_add_channel", async () => {
-    const name = el("input", { type: "text", placeholder: "channel-name", maxlength: 50 });
-    const topic = el("input", { type: "text", placeholder: "Topic (optional)", maxlength: 200 });
-    const okd = await modal({
-      title: "CREATE CHANNEL",
-      body: el("div", {},
-        el("div", { class: "field" }, el("label", {}, "Name"), name),
-        el("div", { class: "field" }, el("label", {}, "Topic"), topic)),
-      confirmText: "Create Channel",
-      onValidate: () => name.value.trim().length >= 2,
-    });
-    if (!okd) return;
-    try {
-      const ch = await API.createChannel(AC.state.pid, name.value.trim(), topic.value.trim());
-      await AC.refreshSidebarData();
-      location.hash = `#/p/${AC.state.pid}/c/${ch.id}`;
-    } catch (e) { toast("Error", e.message, "error"); }
+  AC.on("sidebar_add_channel", sidebarAddChannel, "sb-add-ch");
+  AC.on("sidebar_add_dm", sidebarAddDm, "sb-add-dm");
+}
+
+async function sidebarAddChannel() {
+  const name = el("input", { type: "text", placeholder: "channel-name", maxlength: 50 });
+  const topic = el("input", { type: "text", placeholder: "Topic (optional)", maxlength: 200 });
+  const okd = await modal({
+    title: "CREATE CHANNEL",
+    body: el("div", {},
+      el("div", { class: "field" }, el("label", {}, "Name"), name),
+      el("div", { class: "field" }, el("label", {}, "Topic"), topic)),
+    confirmText: "Create Channel",
+    onValidate: () => name.value.trim().length >= 2,
   });
-  AC.on("sidebar_add_dm", async () => {
-    const sel = el("select", {},
-      ...AC.state.agents.filter((a) => !a.revoked).map((a) =>
-        el("option", { value: a.alias }, a.alias)));
-    if (!sel.children.length) { toast("No Agents", "Nobody to message yet."); return; }
-    const okd = await modal({
-      title: "OPEN DIRECT MESSAGE",
-      body: el("div", { class: "field" }, el("label", {}, "With"), sel),
-      confirmText: "Open DM",
-    });
-    if (!okd) return;
-    try {
-      const dm = await API.openDm(AC.state.pid, sel.value);
-      await AC.refreshSidebarData();
-      location.hash = `#/p/${AC.state.pid}/c/${dm.id}`;
-    } catch (e) { toast("Error", e.message, "error"); }
+  if (!okd) return;
+  try {
+    const ch = await API.createChannel(AC.state.pid, name.value.trim(), topic.value.trim());
+    await AC.refreshSidebarData();
+    location.hash = `#/p/${AC.state.pid}/c/${ch.id}`;
+  } catch (e) { toast("Error", e.message, "error"); }
+}
+
+async function sidebarAddDm() {
+  const sel = el("select", {},
+    ...AC.state.agents.filter((a) => !a.revoked).map((a) =>
+      el("option", { value: a.alias }, a.alias)));
+  if (!sel.children.length) { toast("No Agents", "Nobody to message yet."); return; }
+  const okd = await modal({
+    title: "OPEN DIRECT MESSAGE",
+    body: el("div", { class: "field" }, el("label", {}, "With"), sel),
+    confirmText: "Open DM",
   });
+  if (!okd) return;
+  try {
+    const dm = await API.openDm(AC.state.pid, sel.value);
+    await AC.refreshSidebarData();
+    location.hash = `#/p/${AC.state.pid}/c/${dm.id}`;
+  } catch (e) { toast("Error", e.message, "error"); }
 }
 
 /* =================================================================== chat */
@@ -108,7 +112,6 @@ Views.projectChat = async function (cid, mid) {
       el("div", { class: "e-title" }, "No Channels"), el("p", {}, "This project has no channels yet."))); return; }
     cid = main.id;
   }
-  registerSidebarAdders();
 
   Chat = {
     cid, pid,
@@ -139,7 +142,7 @@ Views.projectChat = async function (cid, mid) {
   const composerWrap = buildComposer({
     placeholder: `Message ${convLabel(conv)} — markdown supported`,
     draftKey: `ac_draft_${pid}_${cid}`,
-    onSend: (text, attachmentIds) => sendMessage(text, attachmentIds),
+    onSend: (text, attachmentIds, extra) => sendMessage(text, attachmentIds, extra),
     onTypingPing: () => {
       const now = Date.now();
       if (now - Chat.lastTypingSent > 4000) {
@@ -332,6 +335,13 @@ Views.projectChat = async function (cid, mid) {
   }
 
   function mountRow(m, opts) {
+    // An in-progress inline edit must survive incoming events: re-use the
+    // existing node instead of rebuilding it out from under the textarea
+    // (issue #29). The edit's own save/cancel path re-renders normally.
+    const existing = Chat.rows.get(m.id) && Chat.rows.get(m.id).node;
+    if (existing && existing.querySelector(".m-body textarea")) {
+      return existing;
+    }
     const node = buildMessageRow(m, {
       compact: opts.compact,
       savedSet: Chat.savedSet,
@@ -532,7 +542,6 @@ Views.projectChat = async function (cid, mid) {
 /* ---------------- message row builder (used by chat + thread + saved) ----- */
 
 function buildMessageRow(m, opts) {
-  const pid = AC.state.pid;
   const mentionsYou = m.role !== "admin" && AC.state.adminAlias
     && new RegExp(`(?<![\\w\`])@${AC.state.adminAlias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(m.body || "");
 
@@ -1192,7 +1201,6 @@ function dayLabel(day) {
 }
 
 Views.activity = async function () {
-  registerSidebarAdders();
   const pid = AC.state.pid;
   const page = el("div", { class: "page" }, el("h1", { class: "page-title" }, "Activity"));
   const list = el("div", { class: "card" });
@@ -1223,7 +1231,6 @@ Views.activity = async function () {
 };
 
 Views.mentions = async function () {
-  registerSidebarAdders();
   const pid = AC.state.pid;
   const data = await API.mentions(pid, false);
   const items = data.items || [];
@@ -1258,7 +1265,6 @@ Views.mentions = async function () {
 };
 
 Views.saved = async function () {
-  registerSidebarAdders();
   const pid = AC.state.pid;
   const data = await API.saved(pid, { limit: 100 });
   const items = data.items || [];
@@ -1284,7 +1290,6 @@ Views.saved = async function () {
 };
 
 Views.pins = async function () {
-  registerSidebarAdders();
   const pid = AC.state.pid;
   const page = el("div", { class: "page" }, el("h1", { class: "page-title" }, "Pins"));
   let any = false;
@@ -1309,7 +1314,6 @@ Views.pins = async function () {
 };
 
 Views.decisions = async function () {
-  registerSidebarAdders();
   const pid = AC.state.pid;
   const data = await API.decisions(pid, { limit: 100 });
   const items = data.items || [];

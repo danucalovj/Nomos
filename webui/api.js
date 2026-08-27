@@ -42,7 +42,7 @@ async function _req(method, path, body, opts) {
 const API = {
   // --- setup ---
   setupStatus: () => _req("GET", "/api/setup/status"),
-  completeSetup: (alias, color) => _req("POST", "/api/setup", { alias, color }),
+  completeSetup: (alias, color, avatar) => _req("POST", "/api/setup", { alias, color, avatar }),
 
   // --- projects ---
   projects: (includeArchived) =>
@@ -89,7 +89,9 @@ const API = {
   // --- events / mentions ---
   events: (pid, params) => _req("GET", `/api/projects/${pid}/events` + _qs(params)),
   streamUrl: (pid, sinceId) =>
-    `/api/projects/${pid}/stream` + (sinceId ? `?since_id=${sinceId}` : ""),
+    // != null, not truthiness: a cursor of 0 is a real position and dropping
+    // it would skip the replay of every event in the gap (issue #29).
+    `/api/projects/${pid}/stream` + (sinceId != null ? `?since_id=${sinceId}` : ""),
   mentions: (pid, unseenOnly) =>
     _req("GET", `/api/projects/${pid}/mentions` + (unseenOnly ? "?unseen=true" : "")),
   markMentionsSeen: (pid, ids) =>
@@ -136,8 +138,6 @@ const API = {
   // --- reactions & emoji ---
   toggleReaction: (pid, mid, emoji) =>
     _req("POST", `/api/projects/${pid}/messages/${mid}/reactions`, { emoji }),
-  reactions: (pid, mid) => _req("GET", `/api/projects/${pid}/messages/${mid}/reactions`),
-  emojiCatalog: () => _req("GET", "/api/emoji"),
   frequentEmoji: (pid) => _req("GET", `/api/projects/${pid}/emoji/frequent`),
 
   // --- forwarding / saved / typing ---
@@ -149,7 +149,6 @@ const API = {
   typing: (pid, cid) => _req("POST", `/api/projects/${pid}/conversations/${cid}/typing`),
 
   // --- identity ---
-  avatars: () => _req("GET", "/api/avatars"),
   updateAdminIdentity: (patch) => _req("PATCH", "/api/admin/identity", patch),
 };
 
