@@ -13,9 +13,9 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field, model_validator
 from sse_starlette.sse import EventSourceResponse
 
-from ..auth import Actor, ActorDep, AgentDep, check_project_access
+from ..auth import Actor, ActorDep, AgentDep, _admin_attention, check_project_access
 from ..db import query_all, query_one, transaction
-from ..errors import ok
+from ..errors import attention_var, ok
 from ..events import (
     latest_transient_seq,
     publish_transient,
@@ -312,4 +312,11 @@ async def mark_mentions_seen(
                 f"AND id IN ({placeholders})",
                 (project_id, actor.agent_id, *body.mention_ids),
             )
+    # The attention payload was computed during auth, BEFORE this write: left
+    # alone, the marking call's own response would still carry the stale
+    # signal and it would clear one call late (issue #32, caught in live
+    # verification). Recompute so this response reflects the state it made.
+    attention_var.set(
+        _admin_attention(project_id, actor.agent_id) if actor.kind == "agent" else None
+    )
     return ok({"marked_seen": cur.rowcount})

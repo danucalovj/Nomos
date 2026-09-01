@@ -40,8 +40,13 @@ def test_attention_rides_unrelated_agent_responses(client, project):
     ).json()
     assert posted["attention"]["admin_mentions_unseen"] == 1
 
-    # Marking seen clears it immediately.
-    unwrap(client.post(f"/api/projects/{pid}/mentions/seen", json={"all": True}, headers=a["headers"]))
+    # Marking seen clears it ON THE MARKING CALL ITSELF (live verification
+    # caught a one-call-late clear: auth computed the payload before the
+    # write), and on everything after.
+    seen_resp = client.post(
+        f"/api/projects/{pid}/mentions/seen", json={"all": True}, headers=a["headers"]
+    ).json()
+    assert seen_resp["ok"] is True and "attention" not in seen_resp
     after = client.get(f"/api/projects/{pid}/tickets", headers=a["headers"]).json()
     assert "attention" not in after
 
