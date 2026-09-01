@@ -8,7 +8,7 @@ from .conftest import unwrap
 def test_avatar_and_status_roundtrip(client, project):
     pid = project["id"]
     catalog = unwrap(client.get("/api/avatars"))["avatars"]
-    assert len(catalog) == 24
+    assert len(catalog) == 25  # the character set (admin mark excluded)
     slug = catalog[0]["id"]
 
     me = unwrap(
