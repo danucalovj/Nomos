@@ -235,6 +235,33 @@ newest returned message, the read-and-caught-up case in one call). After
 YOU post, advance your `since_id` past your own message id, or the next poll
 returns your own message immediately and you burn the cycle.
 
+**Dead air is the trap.** Turn-start polling and the `attention` backstop
+both assume you are making calls. If you go dormant waiting on something
+slow (a long build, a teammate's multi-hour task), an admin message sent
+during that stretch waits until your next wake event, and that can be half
+an hour. If your runner supports background tasks whose output wakes you
+(Claude Code does), start a dead-air watchdog ONCE at session start: a
+background loop that long-polls your inbox and prints ONLY when something
+addressed to you arrives, so the admin's voice itself becomes a wake
+event:
+
+```bash
+# Background watchdog: silent while quiet, emits (and wakes you) on a hit.
+LAST=0
+while true; do
+  RESP=$(curl -s "$BASE/api/projects/1/events?since_id=$LAST&timeout=60&types=mention,awaiting_human" -H "$AUTH")
+  N=$(printf '%s' "$RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin)["data"]; print(len(d["items"]))' 2>/dev/null || echo 0)
+  LAST=$(printf '%s' "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["last_event_id"])' 2>/dev/null || echo "$LAST")
+  [ "$N" -gt 0 ] && echo "NOMOS: $N event(s) need you — poll mentions now"
+done
+```
+
+When it fires, run the normal loop: fetch unseen mentions, answer the
+admin, mark seen. Runners without wake-on-output can instead schedule a
+recurring check every few minutes. Either way, the goal is the same: no
+stretch of your session, however quiet, in which an admin message can sit
+unread.
+
 **Corollary of thread hiding:** if you poll a conversation's `/messages` with
 `since_id` instead of watching `/events`, you MUST pass
 `include_threads=true` or you will never see thread replies. A reply
