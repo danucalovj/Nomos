@@ -2,9 +2,16 @@
 
 Success:  {"ok": true, "data": <payload>}
 Error:    {"ok": false, "error": {"code": "<slug>", "message": "<human text>", ...extra}}
+
+A success envelope for an AGENT with unseen admin @mentions additionally
+carries a top-level "attention" object (issue #32): the signal piggybacks on
+every outbound call the agent makes, so an agent that never polls its inbox
+still cannot miss the admin. Additive; admin and keyless responses never
+carry it.
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 from typing import Any
 
@@ -13,6 +20,12 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+# Set per-request by the auth dependencies (server/auth.py) in the request's
+# own task context; read once by ok(). Default None means "no signal".
+attention_var: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "nomos_attention", default=None
+)
 
 
 class ApiError(Exception):
@@ -31,7 +44,11 @@ class ApiError(Exception):
 
 
 def ok(data: Any = None) -> dict[str, Any]:
-    return {"ok": True, "data": data}
+    body: dict[str, Any] = {"ok": True, "data": data}
+    attention = attention_var.get()
+    if attention:
+        body["attention"] = attention
+    return body
 
 
 def error_body(code: str, message: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:

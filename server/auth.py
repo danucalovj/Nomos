@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from fastapi import Depends, Request
 
 from .db import get_conn, query_one, utc_now
-from .errors import ApiError
+from .errors import ApiError, attention_var
 
 ADMIN_AGENT_ID = 0
 
@@ -74,8 +74,33 @@ _LAST_SEEN_INTERVAL_S = 30.0
 _last_seen_flushed: dict[int, float] = {}
 
 
-def _agent_from_token(token: str) -> Actor:
-    """Blocking: always call via asyncio.to_thread from async code."""
+def _admin_attention(project_id: int, agent_id: int) -> dict | None:
+    """Unseen @mentions authored by the ADMIN for this agent (issue #32).
+    Rides the response envelope so a non-polling agent still sees the human.
+    project_id is included so idx_mentions_target serves the lookup, and
+    soft-deleted messages are excluded to match what the mention feed shows."""
+    row = query_one(
+        """
+        SELECT COUNT(*) AS c, MIN(m.created_at) AS oldest
+        FROM mentions m
+        LEFT JOIN messages msg ON m.message_id = msg.id
+        LEFT JOIN ticket_comments tc ON m.comment_id = tc.id
+        WHERE m.project_id = ? AND m.target_agent_id = ? AND m.seen = 0
+          AND (m.message_id IS NULL OR msg.deleted = 0)
+          AND (msg.author_type = 'admin' OR tc.author_type = 'admin')
+        """,
+        (project_id, agent_id),
+    )
+    if row is not None and row["c"]:
+        return {"admin_mentions_unseen": row["c"], "oldest_at": row["oldest"]}
+    return None
+
+
+def _agent_from_token(token: str) -> tuple[Actor, dict | None]:
+    """Blocking: always call via asyncio.to_thread from async code. Returns
+    the actor plus its attention payload — computed here in the worker and
+    handed back because a ContextVar set inside to_thread's copied context
+    would never reach the request context."""
     row = query_one(
         "SELECT id, project_id, alias, revoked FROM agents WHERE api_key_hash = ?",
         (hash_key(token),),
@@ -89,7 +114,8 @@ def _agent_from_token(token: str) -> Actor:
             "UPDATE agents SET last_seen = ? WHERE id = ?", (utc_now(), row["id"])
         )
         get_conn().commit()
-    return Actor(kind="agent", agent_id=row["id"], project_id=row["project_id"], alias=row["alias"])
+    actor = Actor(kind="agent", agent_id=row["id"], project_id=row["project_id"], alias=row["alias"])
+    return actor, _admin_attention(row["project_id"], row["id"])
 
 
 async def get_actor(request: Request) -> Actor:
@@ -97,7 +123,10 @@ async def get_actor(request: Request) -> Actor:
     Admin resolution requires first-time setup to have been completed."""
     token = _bearer_token(request)
     if token is not None:
-        return await asyncio.to_thread(_agent_from_token, token)
+        actor, attention = await asyncio.to_thread(_agent_from_token, token)
+        attention_var.set(attention)
+        return actor
+    attention_var.set(None)
     alias = get_admin_alias()
     if alias is None:
         raise ApiError(409, "setup_required", "First-time admin setup has not been completed.")
@@ -106,6 +135,7 @@ async def get_actor(request: Request) -> Actor:
 
 async def require_admin(request: Request) -> Actor:
     """Admin-only routes: any agent Bearer key is rejected outright."""
+    attention_var.set(None)
     if _bearer_token(request) is not None:
         raise ApiError(403, "admin_only", "This action is admin-only; agent keys are not accepted.")
     alias = get_admin_alias()
@@ -120,7 +150,9 @@ async def require_agent(request: Request) -> Actor:
     token = _bearer_token(request)
     if token is None:
         raise ApiError(401, "agent_key_required", "This endpoint requires an agent API key.")
-    return await asyncio.to_thread(_agent_from_token, token)
+    actor, attention = await asyncio.to_thread(_agent_from_token, token)
+    attention_var.set(attention)
+    return actor
 
 
 def check_project_access(actor: Actor, project_id: int) -> None:

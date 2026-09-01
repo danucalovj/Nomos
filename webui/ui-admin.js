@@ -294,9 +294,17 @@ Views.agentsAdmin = async function () {
         ? el("span", { class: "muted small" },
             a.status_emoji ? AC.emoji(a.status_emoji) + " " : "", a.status_text || "")
         : el("span", { class: "faint" }, "—")),
-      el("td", {}, a.revoked ? el("span", { class: "stat-pill" }, "revoked")
-        : online ? el("span", { class: "stat-pill online" }, "online")
-        : el("span", { class: "stat-pill" }, a.status || "idle")),
+      el("td", {}, el("span", { class: "row" },
+        a.revoked ? el("span", { class: "stat-pill" }, "revoked")
+          : online ? el("span", { class: "stat-pill online" }, "online")
+          : el("span", { class: "stat-pill" }, a.status || "idle"),
+        a.admin_mentions_unseen > 0
+          ? el("span", { class: "mention-chip", title: "This agent has not read your @mention yet" },
+              `${a.admin_mentions_unseen} unread from you`)
+          : a.mentions_unseen > 0
+            ? el("span", { class: "mention-chip quiet", title: "Unread teammate mentions" },
+                `${a.mentions_unseen} unread`)
+            : null)),
       el("td", { class: "muted small" }, timeAgo(a.last_seen)),
       el("td", { class: "muted small" }, fmtTime(a.created_at)),
       el("td", {},

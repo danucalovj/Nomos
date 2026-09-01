@@ -1222,6 +1222,15 @@ select { font-family: var(--font-mono); font-size: 12px; }
 .notes-todos td { padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .danger-text { color: var(--danger); }
 
+/* --------------------------------------------- unread mention chip (issue #32) */
+.mention-chip {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 8px;
+  border: 1px solid var(--amber); border-radius: var(--r-pill);
+  color: var(--amber); font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: .04em; white-space: nowrap;
+}
+.mention-chip.quiet { border-color: var(--line-bright); color: var(--text-faint); }
+
 /* --------------------------------------------- directory browser (issue #27) */
 .dir-browser {
   margin-top: 4px; border: 1px solid var(--line); border-radius: var(--r-chrome);

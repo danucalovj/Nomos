@@ -179,7 +179,33 @@ async def list_agents(project_id: int, request: Request) -> dict:
     rows = query_all(
         "SELECT * FROM agents WHERE project_id = ? ORDER BY id", (project_id,)
     )
-    return ok({"items": [serialize_agent(r) for r in rows]})
+    items = [serialize_agent(r) for r in rows]
+    if actor.is_admin:
+        # Per-agent unread-mention counts so the admin can SEE an unread
+        # @mention instead of discovering it hours later (issue #32). One
+        # grouped query for the whole roster.
+        counts = {
+            r["aid"]: r
+            for r in query_all(
+                """
+                SELECT m.target_agent_id AS aid, COUNT(*) AS total,
+                       SUM(CASE WHEN msg.author_type = 'admin'
+                                  OR tc.author_type = 'admin' THEN 1 ELSE 0 END) AS from_admin
+                FROM mentions m
+                LEFT JOIN messages msg ON m.message_id = msg.id
+                LEFT JOIN ticket_comments tc ON m.comment_id = tc.id
+                WHERE m.project_id = ? AND m.seen = 0
+                  AND (m.message_id IS NULL OR msg.deleted = 0)
+                GROUP BY m.target_agent_id
+                """,
+                (project_id,),
+            )
+        }
+        for item in items:
+            row = counts.get(item["id"])
+            item["mentions_unseen"] = row["total"] if row else 0
+            item["admin_mentions_unseen"] = (row["from_admin"] or 0) if row else 0
+    return ok({"items": items})
 
 
 @router.get("/me")
